@@ -5,7 +5,7 @@ Repository for the High-Performance Data and Graph Analytics contest.
 Main deadlines:
 
 - Register for the contest: 2024-11-21 (yy-mm-dd) @ 23:59 CET
-- Submission (as detailed in the lecture's slides): 2024-12-31 (yy-mm-dd) @ 23:59 CET (NO LATE COMMITS!)
+- Submission (as detailed in the lecture's slides): 2024-12-30 (yy-mm-dd) @ 23:59 CET (NO LATE COMMITS!)
 
 For further details follow the information on the lecture's slides. 
 
@@ -16,7 +16,7 @@ The contest is organized in two main steps:
 1. Accelerate the search procedure for varying values of K (K=100, K=1000)
 2. [Optional - Only after 1 is completed] Accelerate the index construction step
 
-You are responsible of completing the two steps and properly organize the time at your disposal!
+You are responsible for completing the two steps and properly organizing the time at your disposal!
 
 Create a [release](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository) once step-1 is completed.
 
