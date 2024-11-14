@@ -9,6 +9,7 @@
 #include <cassert>
 #include <random>
 #include <map>
+#include <functional>
 
 using namespace std;
 
