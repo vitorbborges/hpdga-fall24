@@ -1,1 +1,3 @@
 build/
+datasets/sift/
+datasets/sift.tar.gz
