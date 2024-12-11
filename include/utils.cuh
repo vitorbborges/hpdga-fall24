@@ -10,6 +10,7 @@
 #include <random>
 #include <map>
 #include <functional>
+#include <string>
 
 using namespace std;
 

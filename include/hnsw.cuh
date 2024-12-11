@@ -1,8 +1,5 @@
-#ifndef HNSW_HNSW_HPP
-#define HNSW_HNSW_HPP
-
 #include <queue>
-#include <utils.hpp>
+#include <utils.cuh>
 #include <random>
 
 using namespace std;
@@ -306,5 +303,3 @@ namespace hnsw {
         }
     };
 }
-
-#endif //HNSW_HNSW_HPP

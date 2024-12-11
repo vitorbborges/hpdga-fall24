@@ -1,10 +1,32 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.18)
 
-set(CMAKE_CXX_STANDARD 17)
-project(hnsw)
+# Project name and enable CUDA
+project(CudaProject LANGUAGES CUDA)
 
-add_executable(hnsw main.cpp)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -O3") 
+# Specify the CUDA standard
+set(CMAKE_CUDA_STANDARD 14)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-include_directories(${PROJECT_SOURCE_DIR}/include)
+# Include directories
+include_directories(include)
 
+# Source files
+set(SOURCES
+    main.cu
+)
+
+# Create the executable
+add_executable(${PROJECT_NAME} ${SOURCES})
+
+# Set CUDA properties
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+)
+
+# Custom target to build and run
+add_custom_target(run
+    COMMAND ${CMAKE_BINARY_DIR}/${PROJECT_NAME}
+    DEPENDS ${PROJECT_NAME}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMENT "Running the compiled executable"
+)
