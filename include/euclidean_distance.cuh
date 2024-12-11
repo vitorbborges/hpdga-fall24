@@ -44,7 +44,7 @@ __global__ void euclidean_distance_kernel(const T* a, const T* b, T* partialSums
 template <typename T>
 T euclidean_distance_cuda(const Data<T>& a, const Data<T>& b) {
 
-    int size = a.size();
+    int size = a.size(); // TODO: pass size as reference to save memory in each call.
     const T *h_a = a.x.data();
     const T *h_b = b.x.data();
     T *d_a, *d_b, *d_partialSums;
