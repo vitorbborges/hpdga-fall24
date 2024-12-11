@@ -2,3 +2,4 @@ build/
 datasets/sift/
 datasets/sift.tar.gz
 .env
+report*.nsys-rep
