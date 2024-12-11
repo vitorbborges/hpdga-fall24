@@ -6,6 +6,8 @@ project(CudaProject LANGUAGES CUDA)
 # Specify the CUDA standard
 set(CMAKE_CUDA_STANDARD 14)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_ARCHITECTURES 89)
+
 
 # Include directories
 include_directories(include)

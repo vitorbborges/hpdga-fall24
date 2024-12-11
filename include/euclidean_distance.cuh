@@ -4,11 +4,13 @@
 #include <cuda_runtime.h>
 #include <iostream>
 #include <cmath>
-#include "utils.hpp"  // Ensure this is included for the Data template
+#include <utils.cuh>
+
+using utils::Data;
 
 // CUDA kernel for computing partial squared differences
-template <typename T>
-__global__ void computeSquaredDifferences(const T* a, const T* b, T* partialSums, int size) {
+template <typename T = float>
+__global__ void euclidean_distance_kernel(const T* a, const T* b, T* partialSums, int size) {
     extern __shared__ T sharedData[];
 
     int tid = threadIdx.x;
@@ -42,11 +44,11 @@ __global__ void computeSquaredDifferences(const T* a, const T* b, T* partialSums
 template <typename T>
 T euclidean_distance_cuda(const Data<T>& a, const Data<T>& b) {
 
-    int size = a.x.size();
+    int size = a.size();
     const T *h_a = a.x.data();
     const T *h_b = b.x.data();
     T *d_a, *d_b, *d_partialSums;
-    int blockSize = 256;
+    int blockSize = 32;
     int numBlocks = (size + blockSize - 1) / blockSize;
 
     // Allocate memory on device
@@ -59,7 +61,12 @@ T euclidean_distance_cuda(const Data<T>& a, const Data<T>& b) {
     cudaMemcpy(d_b, h_b, size * sizeof(T), cudaMemcpyHostToDevice);
 
     // Launch kernel
-    computeSquaredDifferences<<<numBlocks, blockSize, blockSize * sizeof(T)>>>(d_a, d_b, d_partialSums, size);
+    euclidean_distance_kernel<T><<<numBlocks, blockSize, blockSize * sizeof(T)>>>(d_a, d_b, d_partialSums, size);
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        std::cerr << "CUDA Kernel error: " << cudaGetErrorString(err) << std::endl;
+    }
+    cudaDeviceSynchronize();
 
     // Allocate memory for partial sums on host
     T* h_partialSums = new T[numBlocks];
