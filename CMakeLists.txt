@@ -6,8 +6,23 @@ project(CudaProject LANGUAGES CUDA)
 # Specify the CUDA standard
 set(CMAKE_CUDA_STANDARD 14)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_ARCHITECTURES 89)
 
+# Read the .env file
+file(READ ${CMAKE_SOURCE_DIR}/.env ENV_CONTENT)
+
+# Extract the CUDA architecture value
+string(REGEX MATCH "CUDA_ARCH=([0-9]+)" _MATCH ${ENV_CONTENT})
+
+# Extract the matched number (architecture value) from the result
+if(_MATCH)
+    string(REGEX REPLACE "CUDA_ARCH=" "" CUDA_ARCH ${_MATCH})
+else()
+    set(CUDA_ARCH 75) # Default value if CUDA_ARCH is not set
+endif()
+
+# Set CUDA architectures
+set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCH})
+message(STATUS "Using CUDA architecture: ${CUDA_ARCH}")
 
 # Include directories
 include_directories(include)
