@@ -7,63 +7,18 @@ using namespace std;
 using namespace utils;
 
 namespace hnsw {
-    struct Node {
-        const Data<>& data;
-        Neighbors neighbors;
-
-        explicit Node(const Data<>& data_) : data(data_) {}
-    };
-
-    using Layer = vector<Node>;
-
-    struct SearchResult {
-        Neighbors result;
-        double recall = 0;
-    };
-
-    struct SearchResults {
-        vector<SearchResult> results;
-
-        SearchResults(size_t size) : results(size) {}
-        void push_back(const SearchResult& result) { results.emplace_back(result); }
-        void push_back(SearchResult&& result) { results.emplace_back(move(result)); }
-        decltype(auto) operator [] (int i) { return results[i]; }
-
-        void save(const string& log_path, const string& result_path) {
-            ofstream log_ofs(log_path);
-            string line = "query_id,recall";
-            log_ofs << line << endl;
-
-            ofstream result_ofs(result_path);
-            line = "query_id,data_id,dist";
-            result_ofs << line << endl;
-
-            int query_id = 0;
-            for (const auto& result : results) {
-                log_ofs << query_id << ","<< result.recall << endl;
-
-                for (const auto& neighbor : result.result) {
-                    result_ofs << query_id << ","
-                               << neighbor.id << ","
-                               << neighbor.dist << endl;
-                }
-
-                query_id++;
-            }
-        }
-    };
-
+    
     struct HNSW {
         const int m, m_max_0, ef_construction;
         const double m_l;
         const bool extend_candidates, keep_pruned_connections;
 
+        size_t ds_size;
         int enter_node_id;
         int enter_node_level;
         vector<Layer> layers;
         map<int, vector<int>> layer_map;
         Dataset<> dataset;
-        DistanceFunction<> calc_dist;
 
         mt19937 engine;
         uniform_real_distribution<double> unif_dist;
@@ -74,7 +29,6 @@ namespace hnsw {
                 ef_construction(ef_construction),
                 extend_candidates(extend_candidates),
                 keep_pruned_connections(keep_pruned_connections),
-                calc_dist(euclidean_distance_cuda<float>),
                 engine(42), unif_dist(0.0, 1.0) {}
 
         const Node& get_enter_node() const { return layers.back()[enter_node_id]; }
@@ -86,14 +40,15 @@ namespace hnsw {
         auto search_layer(const Data<>& query, int start_node_id, int ef, int l_c) {
             auto result = SearchResult();
 
-            vector<bool> visited(dataset.size());
+            bool visited[dataset.size()];
+            std::fill(visited, visited + ds_size, false);
             visited[start_node_id] = true;
 
             priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
             priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
 
             const auto& start_node = layers[l_c][start_node_id];
-            const auto dist_from_en = calc_dist(query, start_node.data);
+            const auto dist_from_en = euclidean_distance_cuda<float>(query.x.data(), start_node.data.x.data(), query.size());
 
             candidates.emplace(dist_from_en, start_node_id);
             top_candidates.emplace(dist_from_en, start_node_id);
@@ -110,7 +65,7 @@ namespace hnsw {
                     visited[neighbor.id] = true;
 
                     const auto& neighbor_node = layers[l_c][neighbor.id];
-                    const auto dist_from_neighbor = calc_dist(query, neighbor_node.data);
+                    const auto dist_from_neighbor = euclidean_distance_cuda<float>(query.x.data(), neighbor_node.data.x.data(), query.size());
 
                     if (dist_from_neighbor < top_candidates.top().dist ||
                         top_candidates.size() < ef) {
@@ -156,7 +111,8 @@ namespace hnsw {
                     for (const auto& neighbor : candidate_node.neighbors) {
                         const auto& neighbor_node = layer[neighbor.id];
                         const auto dist_from_neighbor =
-                                calc_dist(query, neighbor_node.data);
+                                euclidean_distance<float>(query, neighbor_node.data);
+                                // TODO: change euclidean_distance to cuda version
                         candidates.emplace(dist_from_neighbor, neighbor.id);
                     }
                 }
@@ -176,7 +132,8 @@ namespace hnsw {
                 bool good = true;
                 for (const auto& neighbor : neighbors) {
                     const auto& neighbor_node = layer[neighbor.id];
-                    const auto dist = calc_dist(candidate_node.data, neighbor_node.data);
+                    const auto dist = euclidean_distance<float>(candidate_node.data, neighbor_node.data);
+                                        // TODO: change euclidean_distance to cuda version
 
                     if (dist < candidate.dist) {
                         good = false;
@@ -274,6 +231,7 @@ namespace hnsw {
 
         void build(const Dataset<>& dataset_) {
             dataset = dataset_;
+            ds_size = dataset.size();
             for (const auto& data : dataset){
                 insert(data);
             }

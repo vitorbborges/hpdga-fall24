@@ -63,9 +63,6 @@ namespace utils {
     using Dataset = vector<Data<T>>;
 
     template <typename T = float>
-    using DistanceFunction = function<float(Data<T>, Data<T>)>;
-
-    template <typename T = float>
     auto euclidean_distance(const Data<T>& p1, const Data<T>& p2) {
         float result = 0;
         for (size_t i = 0; i < p1.size(); i++) {
@@ -236,6 +233,52 @@ namespace utils {
 
         return neighbors_list;
     }
+
+    struct Node {
+        const Data<>& data;
+        Neighbors neighbors;
+
+        explicit Node(const Data<>& data_) : data(data_) {}
+    };
+
+    using Layer = vector<Node>;
+
+    struct SearchResult {
+        Neighbors result;
+        double recall = 0;
+    };
+
+    struct SearchResults {
+        vector<SearchResult> results;
+
+        SearchResults(size_t size) : results(size) {}
+        void push_back(const SearchResult& result) { results.emplace_back(result); }
+        void push_back(SearchResult&& result) { results.emplace_back(move(result)); }
+        decltype(auto) operator [] (int i) { return results[i]; }
+
+        void save(const string& log_path, const string& result_path) {
+            ofstream log_ofs(log_path);
+            string line = "query_id,recall";
+            log_ofs << line << endl;
+
+            ofstream result_ofs(result_path);
+            line = "query_id,data_id,dist";
+            result_ofs << line << endl;
+
+            int query_id = 0;
+            for (const auto& result : results) {
+                log_ofs << query_id << ","<< result.recall << endl;
+
+                for (const auto& neighbor : result.result) {
+                    result_ofs << query_id << ","
+                               << neighbor.id << ","
+                               << neighbor.dist << endl;
+                }
+
+                query_id++;
+            }
+        }
+    };
 }
 
 #endif //UTILS_HPP
