@@ -10,7 +10,7 @@ using utils::Data;
 
 // CUDA kernel for computing partial squared differences
 template <typename T = float>
-__global__ void euclidean_distance_kernel(const T* a, const T* b, T* partialSums, int size) {
+__global__ void euclidean_distance_kernel(const T* a, const T* b, T* partialSums, const size_t size) {
     extern __shared__ T sharedData[];
 
     int tid = threadIdx.x;
@@ -42,7 +42,7 @@ __global__ void euclidean_distance_kernel(const T* a, const T* b, T* partialSums
 
 // Host function to compute Euclidean distance
 template <typename T>
-T euclidean_distance_cuda(const T* h_a, const T* h_b, const int size) {
+T euclidean_distance_cuda(const T* h_a, const T* h_b, const size_t size) {
 
     T *d_a, *d_b, *d_partialSums;
     int blockSize = 128;

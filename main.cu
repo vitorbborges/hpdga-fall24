@@ -31,12 +31,14 @@ int main() {
     // "datasets/sift/sift_groundtruth.ivecs"; const int n = 1000000, n_query =
     // 10000;
 
-    
 
+    cout << "Start loading data" << endl;
     const auto dataset = fvecs_read(data_path, n);
     const auto queries = fvecs_read(query_path, n_query);
     const auto ground_truth = load_ivec(ground_truth_path, n_query, k);
+    cout << "Data loaded" << endl;
 
+    cout << "Start building index" << endl;
     const auto start = get_now();
     auto index = HNSW(m, ef_construction);
     index.build(dataset);
@@ -57,7 +59,7 @@ int main() {
         auto q_end = get_now();
         total_queries += get_duration(q_start, q_end);
 
-        result.recall = calc_recall(result.result, ground_truth[query.id], k);
+        result.recall = calc_recall(result.result, ground_truth[query.id()], k);
         results[i] = result;
         }
     }

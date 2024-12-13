@@ -1,5 +1,5 @@
-#ifndef UTILS_HPP
-#define UTILS_HPP
+#ifndef HNSW_UTILS_HPP
+#define HNSW_UTILS_HPP
 
 #include <iostream>
 #include <vector>
@@ -15,50 +15,100 @@
 using namespace std;
 
 namespace utils {
-
     template <typename T = float>
-    struct Data {
-        size_t id;
-        std::vector<T> x;
-
-        Data() : id(0), x({0}) {}
-
-        Data(size_t i, std::vector<T> v) {
-            id = i;
-            std::copy(v.begin(), v.end(), std::back_inserter(x));
+    class Data {
+    private:
+        size_t unique_id;
+        size_t dim; // TODO: remove dim from this class to save memory.
+        T* x;
+    public:
+        // Constructor with a pointer to an array and size
+        Data(size_t i, T* arr, size_t d) : unique_id(i), dim(d) {
+            x = new T[dim];
+            std::copy(arr, arr + dim, x); // Copy array into dynamic memory
         }
 
-        Data(std::vector<T> v) {
-            id = 0;
-            std::copy(v.begin(), v.end(), std::back_inserter(x));
+        // Destructor
+        ~Data() {
+            delete[] x;
         }
 
-        auto& operator [] (size_t i) { return x[i]; }
-        const auto& operator [] (size_t i) const { return x[i]; }
-
-        bool operator==(const Data &o) const {
-            if (id == o.id) return true;
-            return false;
+        // Copy constructor
+        Data(const Data& other) : unique_id(other.unique_id), dim(other.dim) {
+            x = new T[dim];
+            std::copy(other.x, other.x + dim, x);
         }
 
-        bool operator!=(const Data &o) const {
-            if (id != o.id) return true;
-            return false;
+        // Copy assignment operator
+        Data& operator=(const Data& other) {
+            if (this == &other) return *this; // Self-assignment check
+            
+            delete[] x; // Free existing memory
+            dim = other.dim;
+            x = new T[dim];
+            std::copy(other.x, other.x + dim, x);
+            return *this;
         }
 
-        size_t size() const { return x.size(); }
-        auto begin() const { return x.begin(); }
-        auto end() const { return x.end(); }
+        // Move constructor
+        Data(Data&& other) noexcept : unique_id(other.unique_id), dim(other.dim), x(other.x) {
+            other.x = nullptr;  // Null out the original pointer
+        }
 
-        void show() const {
-            std::cout << id << ": ";
-            for (const auto &xi : x) {
-                std::cout << xi << ' ';
+        // Move assignment operator
+        Data& operator=(Data&& other) noexcept {
+            if (this == &other) return *this;
+            delete[] x;  // Free existing memory
+            unique_id = other.unique_id;
+            dim = other.dim;
+            x = other.x;
+            other.x = nullptr;  // Null out the original pointer
+            return *this;
+        }
+
+        // Access operator (non-const)
+        T& operator[](size_t i) {
+            return x[i];
+        }
+
+        // Access operator (const)
+        const T& operator[](size_t i) const {
+            return x[i];
+        }
+
+        // Equality operator
+        bool operator==(const Data& o) const {
+            if (unique_id != o.unique_id) return false;
+            if (dim != o.dim) return false;
+            for (size_t i = 0; i < dim; ++i) {
+                if (x[i] != o.x[i]) return false;
             }
-            std::cout << std::endl;
+            return true;
+        }
+        // Inequality operator
+        bool operator!=(const Data& o) const {
+            return !(*this == o);
+        }
+        // Size function
+        size_t size() const {
+            return dim;
+        }
+        // Getter for the ID
+        size_t id() const {
+            return unique_id;
+        }
+        // Getter for the pointer to the underlying array
+        T* data() {
+            return x;
+        }
+        // Const getter for the pointer to the underlying array (const version)
+        const T* data() const {
+            return x;
         }
     };
 
+    
+    
     template <typename T = float>
     using Dataset = vector<Data<T>>;
 
@@ -74,7 +124,7 @@ namespace utils {
 
     Dataset<float> fvecs_read(const std::string& filename, int size) {
         std::ifstream file(filename, std::ios::binary);
-        
+
         if (!file.is_open()) {
             throw std::runtime_error("I/O error: Unable to open the file " + filename);
         }
@@ -112,11 +162,12 @@ namespace utils {
         // Reshape the vectors
         Dataset<float> dataset;
         for (int i = 0; i < n; ++i) {
-            std::vector<float> values;
+            float values[d];  // Create a local array
             for (int j = 0; j < d; ++j) {
-                values.push_back(static_cast<float>(buffer[i * (d + 1) + j + 1])); // Start from 1 to skip the dimension value
+                values[j] = buffer[i * (d + 1) + j + 1]; // Start from 1 to skip the dimension value
             }
-            dataset.push_back(Data<float>(a + i - 1, values)); // Index starts from 0
+            // Pass the array pointer to the Data constructor
+            dataset.push_back(Data<float>(a + i - 1, values, d)); // Index starts from 0
         }
 
         file.close();
@@ -281,4 +332,4 @@ namespace utils {
     };
 }
 
-#endif //UTILS_HPP
+#endif // HNSW_UTILS_HPP

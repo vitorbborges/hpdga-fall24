@@ -7,13 +7,14 @@ using namespace std;
 using namespace utils;
 
 namespace hnsw {
-    
+
     struct HNSW {
         const int m, m_max_0, ef_construction;
         const double m_l;
         const bool extend_candidates, keep_pruned_connections;
 
-        size_t ds_size;
+        long unsigned ds_size;
+        size_t vec_dim;
         int enter_node_id;
         int enter_node_level;
         vector<Layer> layers;
@@ -29,6 +30,7 @@ namespace hnsw {
                 ef_construction(ef_construction),
                 extend_candidates(extend_candidates),
                 keep_pruned_connections(keep_pruned_connections),
+                ds_size(0), vec_dim(0),
                 engine(42), unif_dist(0.0, 1.0) {}
 
         const Node& get_enter_node() const { return layers.back()[enter_node_id]; }
@@ -40,15 +42,14 @@ namespace hnsw {
         auto search_layer(const Data<>& query, int start_node_id, int ef, int l_c) {
             auto result = SearchResult();
 
-            bool visited[dataset.size()];
-            std::fill(visited, visited + ds_size, false);
+            bool visited[dataset.size()] = {false};
             visited[start_node_id] = true;
 
             priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
             priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
 
             const auto& start_node = layers[l_c][start_node_id];
-            const auto dist_from_en = euclidean_distance_cuda<float>(query.x.data(), start_node.data.x.data(), query.size());
+            const auto dist_from_en = euclidean_distance_cuda<float>(query.data(), start_node.data.data(), query.size());
 
             candidates.emplace(dist_from_en, start_node_id);
             top_candidates.emplace(dist_from_en, start_node_id);
@@ -65,7 +66,7 @@ namespace hnsw {
                     visited[neighbor.id] = true;
 
                     const auto& neighbor_node = layers[l_c][neighbor.id];
-                    const auto dist_from_neighbor = euclidean_distance_cuda<float>(query.x.data(), neighbor_node.data.x.data(), query.size());
+                    const auto dist_from_neighbor = euclidean_distance_cuda<float>(query.data(), neighbor_node.data.data(), query.size());
 
                     if (dist_from_neighbor < top_candidates.top().dist ||
                         top_candidates.size() < ef) {
@@ -93,7 +94,7 @@ namespace hnsw {
                     candidates, discarded_candidates;
 
             vector<bool> added(dataset.size());
-            added[query.id] = true;
+            added[query.id()] = true;
 
             // init candidates
             for (const auto& candidate : initial_candidates) {
@@ -158,7 +159,7 @@ namespace hnsw {
         void insert(const Data<>& new_data) {
             auto l_new_node = get_new_node_level(); // all levels below that will have the node in it
             for (int l_c = l_new_node; l_c >= 0; --l_c)
-                layer_map[l_c].emplace_back(new_data.id); // register the ID of that node in the map for all the lower layers
+                layer_map[l_c].emplace_back(new_data.id()); // register the ID of that node in the map for all the lower layers
 
             // navigate the layers from the start_node_layer down to the layer where the new node needs to be added
             auto start_node_id = enter_node_id;
@@ -185,14 +186,14 @@ namespace hnsw {
                 auto& layer = layers[l_c];
                 // for each neighbor
                 for (const auto neighbor : neighbors) {
-                    if (neighbor.id == new_data.id)
+                    if (neighbor.id == new_data.id())
                         continue;
                     // get the Node class (the list of neighbors contains only IDs)
                     auto& neighbor_node = layer[neighbor.id];
 
                     // add a bidirectional edge
-                    layer[new_data.id].neighbors.emplace_back(neighbor); // link the new node to its NN
-                    neighbor_node.neighbors.emplace_back(neighbor.dist, new_data.id); // add the link from the neighbour to the new node
+                    layer[new_data.id()].neighbors.emplace_back(neighbor); // link the new node to its NN
+                    neighbor_node.neighbors.emplace_back(neighbor.dist, new_data.id()); // add the link from the neighbour to the new node
 
                     const auto m_max = l_c ? m : m_max_0; // if we are in layer 0 m_max should be equal to m_max of layer 0 (which is different from the normal M)
 
@@ -206,7 +207,7 @@ namespace hnsw {
 
                 if (l_c == 0) // if we arrived at layer 0 we can skip the following step
                     break;
-                
+
                 // repeat the operation taking into consideration the nearest neighbour of new_data  
                 start_node_id = neighbors[0].id;
             }
@@ -216,7 +217,7 @@ namespace hnsw {
             // if new node is top (this can either happen at the first element added or if we are adding a new layer)
             if (layers.empty() || l_new_node > enter_node_level) {
                 // change enter node
-                enter_node_id = new_data.id;
+                enter_node_id = new_data.id();
 
                 // add new layer
                 layers.resize(l_new_node + 1);
@@ -233,6 +234,9 @@ namespace hnsw {
             dataset = dataset_;
             ds_size = dataset.size();
             for (const auto& data : dataset){
+                if (data.id() == 0) {
+                    vec_dim = dataset[data.id()].size();
+                }
                 insert(data);
             }
             cout << "Index construction completed." << endl;
