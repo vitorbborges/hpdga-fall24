@@ -45,7 +45,7 @@ template <typename T>
 T euclidean_distance_cuda(const T* h_a, const T* h_b, const size_t size) {
 
     T *d_a, *d_b, *d_partialSums;
-    int blockSize = 128;
+    int blockSize = 32;
     int numBlocks = (size + blockSize - 1) / blockSize;
 
     // Allocate memory on device

@@ -2,6 +2,7 @@
 #include <utils.cuh>
 #include <random>
 #include <euclidean_distance.cuh>
+#include <process_neighbors.cuh>
 
 using namespace std;
 using namespace utils;
@@ -49,7 +50,7 @@ namespace hnsw {
             priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
 
             const auto& start_node = layers[l_c][start_node_id];
-            const auto dist_from_en = euclidean_distance_cuda<float>(query.data(), start_node.data.data(), query.size());
+            const auto dist_from_en = euclidean_distance_cuda<float>(query.data(), start_node.data.data(), vec_dim);
 
             candidates.emplace(dist_from_en, start_node_id);
             top_candidates.emplace(dist_from_en, start_node_id);
@@ -61,17 +62,42 @@ namespace hnsw {
 
                 if (nearest_candidate.dist > top_candidates.top().dist) break;
 
-                for (const auto neighbor : nearest_candidate_node.neighbors) {
-                    if (visited[neighbor.id]) continue;
-                    visited[neighbor.id] = true;
+                const size_t neighbors_n =  nearest_candidate_node.neighbors.size();
 
-                    const auto& neighbor_node = layers[l_c][neighbor.id];
-                    const auto dist_from_neighbor = euclidean_distance_cuda<float>(query.data(), neighbor_node.data.data(), query.size());
+                int neighbors_id[neighbors_n];
+                for (int i = 0; i < neighbors_n; i++) {
+                    neighbors_id[i] = nearest_candidate_node.neighbors[i].id;
+                }
 
-                    if (dist_from_neighbor < top_candidates.top().dist ||
+                float neighbors_flat[neighbors_n * vec_dim];
+                for (int i = 0; i < neighbors_n; i++) {
+                    for (int j = 0; j < vec_dim; j++) {
+                        neighbors_flat[i * vec_dim + j] = layers[l_c][nearest_candidate_node.neighbors[i].id].data.data()[j];
+                    }
+                }
+                // TODO: parallelize this flatten.
+
+                float dist_from_neighbors[neighbors_n] = {0};
+
+                if (neighbors_n > 0){
+                    process_neighbors_cuda(
+                        ds_size,
+                        vec_dim,
+                        query.data(),
+                        visited,
+                        neighbors_n,
+                        neighbors_id,
+                        neighbors_flat,
+                        dist_from_neighbors
+                    );
+                }
+
+                for (int i = 0; i < neighbors_n; i++) {
+                    if (visited[neighbors_id[i]]) continue;
+                    if (dist_from_neighbors[i] < top_candidates.top().dist ||
                         top_candidates.size() < ef) {
-                        candidates.emplace(dist_from_neighbor, neighbor.id);
-                        top_candidates.emplace(dist_from_neighbor, neighbor.id);
+                        candidates.emplace(dist_from_neighbors[i], neighbors_id[i]);
+                        top_candidates.emplace(dist_from_neighbors[i], neighbors_id[i]);
 
                         if (top_candidates.size() > ef) top_candidates.pop();
                     }

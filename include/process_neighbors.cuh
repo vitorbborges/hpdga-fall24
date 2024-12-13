@@ -2,113 +2,129 @@
 #define HNSW_PROCESS_NEIGHBORS_CUH
 
 #include <cuda_runtime.h>
-#include <euclidean_distance.cuh>
 #include <utils.cuh>
 
-using namespace utils;
-
-_global_ void process_neighbors(
-    const Neighbor* neighbors, 
-    int num_neighbors,
-    const Node* layer, 
-    const float* query,
-    int* visited, 
-    Neighbor* candidates, 
-    int* candidate_count,
-    Neighbor* top_candidates, 
-    int* top_count, 
-    float top_dist, 
-    int ef
-) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= num_neighbors) return;
-
-    const auto neighbor = neighbors[idx];
-
-    if (atomicExch(&visited[neighbor.id], 1) == 1) return;
-
-    const auto& neighbor_node = layer[neighbor.id];
-    float dist_from_neighbor = euclidean_distance_cuda(query, neighbor_node.data, query.size()); 
-                                // TODO: call the actual kernel here instead of the "launch kernel" auxiliary function
-
-    bool should_add = dist_from_neighbor < top_dist || *top_count < ef;
-    if (should_add) {
-        int position = atomicAdd(candidate_count, 1);
-        candidates[position] = Neighbor(dist_from_neighbor, neighbor.id);
-
-        position = atomicAdd(top_count, 1);
-        if (position < ef) {
-            top_candidates[position] = Neighbor(dist_from_neighbor, neighbor.id);
-        } else {
-            atomicSub(top_count, 1);
-        }
+#define cudaSafeCall(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line) {
+    if (code != cudaSuccess) {
+        fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+        exit(code);
     }
 }
 
-void launch_process_neighbors(
-    const Neighbor* h_neighbors, 
-    int num_neighbors,
-    const Node* h_layer, 
-    const float* h_query, 
-    int query_size,
-    int* h_visited, 
-    Neighbor* h_candidates, 
-    int* h_candidate_count,
-    Neighbor* h_top_candidates, 
-    int* h_top_count, 
-    float top_dist, 
-    int ef
+using namespace utils;
+
+template <typename T = float>
+__global__ void process_neighbors_kernel(
+    const size_t& ds_size,
+    const size_t& vec_dim,
+    const T* query,
+    bool* visited,
+    const size_t& n_neighbors,
+    const int* neighbors_id,
+    const T* neighbors_flat,
+    T* dist_from_neighbors
 ) {
-    Neighbor* d_neighbors;
-    Node* d_layer;
-    float* d_query;
-    int* d_visited;
-    Neighbor* d_candidates;
-    Neighbor* d_top_candidates;
-    int* d_candidate_count;
-    int* d_top_count;
+    extern __shared__ T sharedData[];
 
-    cudaMalloc(&d_neighbors, num_neighbors * sizeof(Neighbor));
-    cudaMalloc(&d_layer, num_neighbors * sizeof(Node));
-    cudaMalloc(&d_query, query_size * sizeof(float));
-    cudaMalloc(&d_visited, num_neighbors * sizeof(int));
-    cudaMalloc(&d_candidates, ef * sizeof(Neighbor));
-    cudaMalloc(&d_top_candidates, ef * sizeof(Neighbor));
-    cudaMalloc(&d_candidate_count, sizeof(int));
-    cudaMalloc(&d_top_count, sizeof(int));
+    int tid = threadIdx.x;
+    int globalIdx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    cudaMemcpy(d_neighbors, h_neighbors, num_neighbors * sizeof(Neighbor), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_layer, h_layer, num_neighbors * sizeof(Node), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_query, h_query, query_size * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_visited, h_visited, num_neighbors * sizeof(int), cudaMemcpyHostToDevice);
+    if (globalIdx >= vec_dim * n_neighbors) return;
 
-    int h_initial_candidate_count = 0;
-    int h_initial_top_count = 0;
-    cudaMemcpy(d_candidate_count, &h_initial_candidate_count, sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_top_count, &h_initial_top_count, sizeof(int), cudaMemcpyHostToDevice);
+    // Calculate which neighbor and feature index we are processing
+    int neighborIdx = globalIdx / vec_dim;  // Which neighbor (from 0 to n_neighbors-1)
+    int featureIdx = globalIdx % vec_dim;   // Which feature (from 0 to vec_dim-1)
 
-    int blockSize = 256;
-    int numBlocks = (num_neighbors + blockSize - 1) / blockSize;
+    // Load squared differences into shared memory
+    if (globalIdx < vec_dim * n_neighbors) {
+        T diff = query[featureIdx] - neighbors_flat[neighborIdx * vec_dim + featureIdx];
+        sharedData[tid] = diff * diff;
+    } else {
+        sharedData[tid] = 0.0;
+    }
 
-    process_neighbors<<<numBlocks, blockSize>>>(
-        d_neighbors, num_neighbors, d_layer, d_query,
-        d_visited, d_candidates, d_candidate_count,
-        d_top_candidates, d_top_count, top_dist, ef
+    __syncthreads();
+
+    // Perform tree-based reduction (sum over the block)
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            sharedData[tid] += sharedData[tid + stride];
+        }
+        __syncthreads();
+    }
+
+    // Write the result of this block to the dist_from_neighbors array
+    if (tid == 0) {
+        dist_from_neighbors[blockIdx.x] = sharedData[0];
+    }
+
+    // Mark neighbors as visited if the index is within range
+    if (blockIdx.x < n_neighbors && neighbors_id[blockIdx.x] < ds_size) {
+        visited[neighbors_id[blockIdx.x]] = true;
+    }
+}
+
+template <typename T = float>
+void process_neighbors_cuda(
+    const size_t& ds_size,
+    const size_t& vec_dim,
+    const T* h_query,
+    bool* h_visited,
+    const size_t& neighbors_n,
+    int* h_neighbors_id,
+    const T* neighbors_flat,
+    T* h_dist_from_neighbors
+) {
+    int blockSize = 128; // Ensure it doesn't exceed GPU limit
+    int numBlocks = (neighbors_n + blockSize - 1) / blockSize; // Adjust for grid size
+
+    // Allocate memory on the device for input and output data
+    T* d_query;
+    cudaMalloc(&d_query, vec_dim * sizeof(T));
+    cudaMemcpy(d_query, h_query, vec_dim * sizeof(T), cudaMemcpyHostToDevice);
+
+    bool* d_visited;
+    cudaMalloc(&d_visited, ds_size * sizeof(bool));
+    cudaMemcpy(d_visited, h_visited, ds_size * sizeof(bool), cudaMemcpyHostToDevice);
+
+    int* d_neighbors_id;
+    cudaMalloc(&d_neighbors_id, neighbors_n * sizeof(int));
+    cudaMemcpy(d_neighbors_id, h_neighbors_id, neighbors_n * sizeof(int), cudaMemcpyHostToDevice);
+
+    T* d_neighbors_flat;
+    cudaMalloc(&d_neighbors_flat, neighbors_n * vec_dim * sizeof(T));
+    cudaMemcpy(d_neighbors_flat, neighbors_flat, neighbors_n * vec_dim * sizeof(T), cudaMemcpyHostToDevice);
+
+    T* d_dist_from_neighbors;
+    cudaMalloc(&d_dist_from_neighbors, neighbors_n * sizeof(T));
+    cudaMemcpy(d_dist_from_neighbors, h_dist_from_neighbors, neighbors_n * sizeof(T), cudaMemcpyHostToDevice);
+
+    // Launch the kernel with adjusted grid size and shared memory size
+    process_neighbors_kernel<T><<<numBlocks, blockSize, blockSize * sizeof(T)>>>(
+        ds_size,
+        vec_dim,
+        d_query,
+        d_visited,
+        neighbors_n,
+        d_neighbors_id,
+        d_neighbors_flat,
+        d_dist_from_neighbors
     );
+    
+    // Check for CUDA kernel errors
+    cudaSafeCall(cudaDeviceSynchronize());
 
-    cudaMemcpy(h_candidate_count, d_candidate_count, sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_top_count, d_top_count, sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_candidates, d_candidates, (*h_candidate_count) * sizeof(Neighbor), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_top_candidates, d_top_candidates, (*h_top_count) * sizeof(Neighbor), cudaMemcpyDeviceToHost);
+    // Copy results back to host
+    cudaMemcpy(h_dist_from_neighbors, d_dist_from_neighbors, neighbors_n * sizeof(T), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_visited, d_visited, ds_size * sizeof(bool), cudaMemcpyDeviceToHost);
 
-    cudaFree(d_neighbors);
-    cudaFree(d_layer);
+    // Free device memory
     cudaFree(d_query);
     cudaFree(d_visited);
-    cudaFree(d_candidates);
-    cudaFree(d_top_candidates);
-    cudaFree(d_candidate_count);
-    cudaFree(d_top_count);
+    cudaFree(d_neighbors_id);
+    cudaFree(d_neighbors_flat);
+    cudaFree(d_dist_from_neighbors);
 }
 
 #endif // HNSW_PROCESS_NEIGHBORS_CUH
