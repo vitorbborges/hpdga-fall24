@@ -28,7 +28,8 @@ _global_ void process_neighbors(
     if (atomicExch(&visited[neighbor.id], 1) == 1) return;
 
     const auto& neighbor_node = layer[neighbor.id];
-    float dist_from_neighbor = euclidean_distance_cuda(query, neighbor_node.data, query.size());
+    float dist_from_neighbor = euclidean_distance_cuda(query, neighbor_node.data, query.size()); 
+                                // TODO: call the actual kernel here instead of the "launch kernel" auxiliary function
 
     bool should_add = dist_from_neighbor < top_dist || *top_count < ef;
     if (should_add) {
