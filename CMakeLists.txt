@@ -7,22 +7,30 @@ project(CudaProject LANGUAGES CUDA)
 set(CMAKE_CUDA_STANDARD 14)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-# Read the .env file
-file(READ ${CMAKE_SOURCE_DIR}/.env ENV_CONTENT)
+# Debugging: Print the source directory
+message(STATUS "CMAKE_SOURCE_DIR: ${CMAKE_SOURCE_DIR}")
 
-# Extract the CUDA architecture value
-string(REGEX MATCH "CUDA_ARCH=([0-9]+)" _MATCH ${ENV_CONTENT})
-
-# Extract the matched number (architecture value) from the result
-if(_MATCH)
-    string(REGEX REPLACE "CUDA_ARCH=" "" CUDA_ARCH ${_MATCH})
+# Check if the .env file exists
+if(EXISTS "${CMAKE_SOURCE_DIR}/.env")
+    message(STATUS ".env file found at ${CMAKE_SOURCE_DIR}/.env")
+    file(READ "${CMAKE_SOURCE_DIR}/.env" ENV_CONTENT)
+    string(REGEX MATCH "CUDA_ARCH=([0-9]+)" _MATCH ${ENV_CONTENT})
+    if(_MATCH)
+        string(REGEX REPLACE "CUDA_ARCH=" "" CUDA_ARCH ${_MATCH})
+    else()
+        message(WARNING "CUDA_ARCH not found in .env file. Using default architecture 75.")
+        set(CUDA_ARCH 75)
+    endif()
 else()
-    set(CUDA_ARCH 75) # Default value if CUDA_ARCH is not set
+    message(WARNING ".env file not found. Using default CUDA_ARCH=75.")
+    set(CUDA_ARCH 75) # Default value
 endif()
+
+# Debugging messages
+message(STATUS "Using CUDA architecture: ${CUDA_ARCH}")
 
 # Set CUDA architectures
 set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCH})
-message(STATUS "Using CUDA architecture: ${CUDA_ARCH}")
 
 # Include directories
 include_directories(include)

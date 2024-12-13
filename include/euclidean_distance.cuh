@@ -89,4 +89,49 @@ T euclidean_distance_cuda(const Data<T>& a, const Data<T>& b) {
     return std::sqrt(sum);
 }
 
+
+template <typename T = float>
+__global__ void batched_distance_kernel(const T* query, const T* references, T* distances,
+                                        const size_t num_queries, const size_t num_references, const size_t dimensions) {
+    extern __shared__ T sharedData[];
+
+    int tid = threadIdx.x;
+    int refIdx = blockIdx.y * blockDim.x + threadIdx.x; // Reference vector index
+    int queryIdx = blockIdx.x;                         // Query vector index
+
+    if (queryIdx >= num_queries || refIdx >= num_references) return;
+
+    // Initialize partial sum
+    T sum = 0.0f;
+
+    // Compute squared differences
+    for (int d = tid; d < dimensions; d += blockDim.x) {
+        T diff = query[queryIdx * dimensions + d] - references[refIdx * dimensions + d];
+        sum += diff * diff;
+    }
+
+    // Warp reduction
+    for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+        sum += __shfl_down_sync(0xFFFFFFFF, sum, offset);
+    }
+
+    // Store the result in shared memory
+    if ((tid & 31) == 0) sharedData[tid / warpSize] = sum;
+    __syncthreads();
+
+    // Final reduction across warps
+    if (tid < blockDim.x / warpSize) {
+        sum = (tid < blockDim.x / warpSize) ? sharedData[tid] : 0.0f;
+        for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+            sum += __shfl_down_sync(0xFFFFFFFF, sum, offset);
+        }
+    }
+
+    // Write the final result
+    if (tid == 0) {
+        distances[queryIdx * num_references + refIdx] = sqrtf(sum);
+    }
+}
+
+
 #endif // HNSW_EUCLIDEAN_DISTANCE_CUH

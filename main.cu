@@ -1,6 +1,7 @@
 #include <hnsw.cuh>
 #include <utils.cuh>
 
+
 #define REPETITIONS 1
 
 using namespace utils;
@@ -9,7 +10,7 @@ using namespace hnsw;
 int main() {
     std::cout << "GPU" << std::endl;
 
-    const string base_dir = "../";
+    const std::string base_dir = "../";
 
     int k = 100;
     int m = 16;
