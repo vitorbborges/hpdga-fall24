@@ -67,7 +67,7 @@ void process_neighbors_cuda(
     const T* h_neighbors_flat,
     T* h_dist_from_neighbors
 ) {
-    int blockSize = h_vec_dim;
+    int blockSize = h_vec_dim; // TODO: this doesnt workk if vector dim is larger than 1024
     int numBlocks = (h_neighbors_n + blockSize - 1) / blockSize;
 
     // Allocate memory on the device for input and output data
