@@ -50,7 +50,7 @@ namespace hnsw {
             priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
 
             const auto& start_node = layers[l_c][start_node_id];
-            const auto dist_from_en = euclidean_distance_cuda<float>(query.data(), start_node.data.data(), vec_dim);
+            const auto dist_from_en = euclidean_distance<float>(query, start_node.data);
 
             candidates.emplace(dist_from_en, start_node_id);
             top_candidates.emplace(dist_from_en, start_node_id);
@@ -75,7 +75,7 @@ namespace hnsw {
                         neighbors_flat[i * vec_dim + j] = layers[l_c][nearest_candidate_node.neighbors[i].id].data.data()[j];
                     }
                 }
-                // TODO: parallelize this flatten.
+                // TODO: parallelize this flatten?
 
                 float dist_from_neighbors[neighbors_n] = {0};
 
@@ -119,7 +119,7 @@ namespace hnsw {
             priority_queue<Neighbor, vector<Neighbor>, CompGreater>
                     candidates, discarded_candidates;
 
-            vector<bool> added(dataset.size());
+            bool added[dataset.size()] = {false};
             added[query.id()] = true;
 
             // init candidates
@@ -131,16 +131,41 @@ namespace hnsw {
 
             if (extend_candidates) {
                 for (const auto& candidate : initial_candidates) {
-                    if (added[candidate.id]) continue;
-                    added[candidate.id] = true;
-
                     const auto& candidate_node = layer[candidate.id];
-                    for (const auto& neighbor : candidate_node.neighbors) {
-                        const auto& neighbor_node = layer[neighbor.id];
-                        const auto dist_from_neighbor =
-                                euclidean_distance<float>(query, neighbor_node.data);
-                                // TODO: change euclidean_distance to cuda version
-                        candidates.emplace(dist_from_neighbor, neighbor.id);
+
+                    const size_t neighbors_n = candidate_node.neighbors.size();
+
+                    int neighbors_id[neighbors_n];
+                    for (int i = 0; i < neighbors_n; i++) {
+                        neighbors_id[i] = candidate_node.neighbors[i].id;
+                    }
+
+                    float neighbors_flat[neighbors_n * vec_dim];
+                    for (int i = 0; i < neighbors_n; i++) {
+                        for (int j = 0; j < vec_dim; j++) {
+                            neighbors_flat[i * vec_dim + j] = layer[neighbors_id[i]].data.data()[j];
+                        }
+                    }
+
+                    float dist_from_neighbors[neighbors_n] = {0};
+
+                    if (neighbors_n > 0){
+                        process_neighbors_cuda(
+                            ds_size,
+                            vec_dim,
+                            query.data(),
+                            added,
+                            neighbors_n,
+                            neighbors_id,
+                            neighbors_flat,
+                            dist_from_neighbors
+                        );
+                    }
+
+                    for (int i = 0; i < neighbors_n; i++) {
+                        if (added[neighbors_id[i]]) continue;
+                        added[neighbors_id[i]] = true;
+                        candidates.emplace(dist_from_neighbors[i], neighbors_id[i]);
                     }
                 }
             }
