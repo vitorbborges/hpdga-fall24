@@ -16,7 +16,6 @@ using namespace utils;
 
 template <typename T = float>
 __global__ void process_neighbors_kernel(
-    const size_t* ds_size,
     const size_t* vec_dim,
     const T* query,
     bool* visited,
@@ -71,10 +70,6 @@ void process_neighbors_cuda(
     int numBlocks = (h_neighbors_n + blockSize - 1) / blockSize;
 
     // Allocate memory on the device for input and output data
-    size_t* d_ds_size;
-    cudaMalloc(&d_ds_size, sizeof(size_t));
-    cudaMemcpy(d_ds_size, &h_ds_size, sizeof(size_t), cudaMemcpyHostToDevice);
-
     size_t* d_vec_dim;
     cudaMalloc(&d_vec_dim, sizeof(size_t));
     cudaMemcpy(d_vec_dim, &h_vec_dim, sizeof(size_t), cudaMemcpyHostToDevice);
@@ -86,6 +81,7 @@ void process_neighbors_cuda(
     bool* d_visited;
     cudaMalloc(&d_visited, h_ds_size * sizeof(bool));
     cudaMemcpy(d_visited, h_visited, h_ds_size * sizeof(bool), cudaMemcpyHostToDevice);
+    // TODO: see if this copy is worth it
 
     size_t* d_neighbors_n;
     cudaMalloc(&d_neighbors_n, sizeof(size_t));
@@ -105,7 +101,6 @@ void process_neighbors_cuda(
 
     // Launch the kernel with adjusted grid size and shared memory size
     process_neighbors_kernel<T><<<numBlocks, blockSize, blockSize * sizeof(T)>>>(
-        d_ds_size,
         d_vec_dim,
         d_query,
         d_visited,
@@ -128,7 +123,6 @@ void process_neighbors_cuda(
     }
 
     // Free device memory
-    cudaFree(d_ds_size);
     cudaFree(d_vec_dim);
     cudaFree(d_query);
     cudaFree(d_visited);
