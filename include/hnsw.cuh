@@ -1,7 +1,7 @@
 #include <queue>
 #include <utils.cuh>
 #include <random>
-#include <euclidean_distance.cuh>
+// #include <euclidean_distance.cuh>
 #include <process_neighbors.cuh>
 
 using namespace std;
