@@ -30,7 +30,8 @@ include_directories(include)
 # Source files
 set(SOURCES
     main.cu
-)
+    include/cpu_eucdist.cu
+    include/tree_reduction_eucdist.cu)
 
 # Create the executable
 add_executable(${PROJECT_NAME} ${SOURCES})
