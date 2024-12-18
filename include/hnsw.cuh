@@ -40,7 +40,7 @@ namespace hnsw {
             return static_cast<int>(-log(unif_dist(engine)) * m_l);
         }
 
-        auto search_layer(const Data<>& query, int start_node_id, int ef, int l_c) {
+        auto search_layer_cuda(const Data<>& query, int start_node_id, int ef, int l_c) {
             auto result = SearchResult();
 
             bool visited[dataset.size()] = {false};
@@ -98,6 +98,55 @@ namespace hnsw {
                         top_candidates.size() < ef) {
                         candidates.emplace(dist_from_neighbors[i], neighbors_id[i]);
                         top_candidates.emplace(dist_from_neighbors[i], neighbors_id[i]);
+
+                        if (top_candidates.size() > ef) top_candidates.pop();
+                    }
+                }
+            }
+
+            while (!top_candidates.empty()) {
+                result.result.emplace_back(top_candidates.top());
+                top_candidates.pop();
+            }
+
+            reverse(result.result.begin(), result.result.end());
+
+            return result;
+        }
+
+        auto search_layer(const Data<>& query, int start_node_id, int ef, int l_c) {
+            auto result = SearchResult();
+
+            vector<bool> visited(dataset.size());
+            visited[start_node_id] = true;
+
+            priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
+            priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
+
+            const auto& start_node = layers[l_c][start_node_id];
+            const auto dist_from_en = euclidean_distance<float>(query, start_node.data);
+
+            candidates.emplace(dist_from_en, start_node_id);
+            top_candidates.emplace(dist_from_en, start_node_id);
+
+            while (!candidates.empty()) {
+                const auto nearest_candidate = candidates.top();
+                const auto& nearest_candidate_node = layers[l_c][nearest_candidate.id];
+                candidates.pop();
+
+                if (nearest_candidate.dist > top_candidates.top().dist) break;
+
+                for (const auto neighbor : nearest_candidate_node.neighbors) {
+                    if (visited[neighbor.id]) continue;
+                    visited[neighbor.id] = true;
+
+                    const auto& neighbor_node = layers[l_c][neighbor.id];
+                    const auto dist_from_neighbor = euclidean_distance<float>(query, neighbor_node.data);
+
+                    if (dist_from_neighbor < top_candidates.top().dist ||
+                        top_candidates.size() < ef) {
+                        candidates.emplace(dist_from_neighbor, neighbor.id);
+                        top_candidates.emplace(dist_from_neighbor, neighbor.id);
 
                         if (top_candidates.size() > ef) top_candidates.pop();
                     }
@@ -298,7 +347,7 @@ namespace hnsw {
             // search in upper layers
             auto start_id_layer = enter_node_id;
             for (int l_c = enter_node_level; l_c >= 1; --l_c) {
-                const auto result_layer = search_layer(query, start_id_layer, 1, l_c);
+                const auto result_layer = search_layer_cuda(query, start_id_layer, 1, l_c);
                 const auto& nn_id_layer = result_layer.result[0].id;
                 start_id_layer = nn_id_layer;
             }
@@ -306,7 +355,7 @@ namespace hnsw {
             const auto& nn_upper_layer = layers[1][start_id_layer];
 
             // search in base layer
-            const auto result_layer = search_layer(query, start_id_layer, ef, 0);
+            const auto result_layer = search_layer_cuda(query, start_id_layer, ef, 0);
             const auto candidates = result_layer.result;
             for (const auto& candidate : candidates) {
                 result.result.emplace_back(candidate);
