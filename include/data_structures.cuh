@@ -131,7 +131,7 @@ namespace ds {
 
     struct Node {
         const Data<>& data;
-        Neighbors neighbors;
+        Neighbors neighbors; // TODO: implement this as an array for search stage
 
         explicit Node(const Data<>& data_) : data(data_) {}
     };
