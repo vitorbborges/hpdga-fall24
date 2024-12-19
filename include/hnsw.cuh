@@ -1,11 +1,13 @@
 #include <queue>
 #include <utils.cuh>
 #include <random>
-#include <euclidean_distance.cuh>
-#include <process_neighbors.cuh>
+// #include "euclidean_distance.cuh"
+#include "process_neighbors.cuh"
+#include "data_structures.cuh"
 
 using namespace std;
 using namespace utils;
+using namespace ds;
 
 namespace hnsw {
 
@@ -43,7 +45,7 @@ namespace hnsw {
         auto search_layer_cuda(const Data<>& query, int start_node_id, int ef, int l_c) {
             auto result = SearchResult();
 
-            bool visited[dataset.size()] = {false};
+            bool visited[dataset.size()] = {false}; // TODO: check if this can be abstracted to class data member
             visited[start_node_id] = true;
 
             priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
