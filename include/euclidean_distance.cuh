@@ -1,21 +1,24 @@
-#pragma once
+#ifndef HNSW_EUCLIDEAN_DISTANCE_CUH
+#define HNSW_EUCLIDEAN_DISTANCE_CUH
 
 #include <cuda_runtime.h>
 #include <cmath>
 
+#define WARP_SIZE 32
+
 // Helper function for warp-level reduction
-template <typename T>
+;template <typename T = float>
 __inline__ __device__ T warpReduceSum(T val) {
     for (int offset = 16; offset > 0; offset /= 2) {
         val += __shfl_down_sync(0xFFFFFFFF, val, offset);
     }
     return val;
-}
+};
 
 // Kepler-optimized Euclidean distance kernel
 template <typename T>
 __inline__ __device__ void euclidean_distance_kepler(const T* vec1, const T* vec2, T* distances, size_t dimensions) {
-    static __shared__ T shared[32];
+    static __shared__ T sharedData[32];
 
 
     unsigned int tid = threadIdx.x;
@@ -37,10 +40,10 @@ __inline__ __device__ void euclidean_distance_kepler(const T* vec1, const T* vec
     sum = warpReduceSum(sum);
 
     // Block reduction using shared memory
-    if ((tid & 31) == 0) sharedData[tid / warpSize] = sum;
+    if ((tid & 31) == 0) sharedData[tid / WARP_SIZE] = sum;
     __syncthreads();
 
-    if (tid < blockDim.x / warpSize) sum = warpReduceSum(sharedData[tid]);
+    if (tid < blockDim.x / WARP_SIZE) sum = warpReduceSum(sharedData[tid]);
     if (tid == 0) distances[blockIdx.x] = sqrtf(sum);
 }
 
@@ -77,3 +80,5 @@ __inline__ __device__ void euclidean_distance_gpu(const T* vec1, const T* vec2, 
         *distance = sqrtf(sum); 
     }
 }
+
+#endif // HNSW_EUCLIDEAN_DISTANCE_CUH

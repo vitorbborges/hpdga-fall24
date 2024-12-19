@@ -4,6 +4,7 @@
 // #include "euclidean_distance.cuh"
 #include "process_neighbors.cuh"
 #include "data_structures.cuh"
+#include "search_layer.cuh"
 
 using namespace std;
 using namespace utils;
