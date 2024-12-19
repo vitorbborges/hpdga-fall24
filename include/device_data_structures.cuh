@@ -16,7 +16,7 @@ struct d_Neighbor {
     T dist;
     int id;
 
-    __device__ d_Neighbor(T dist, int id) : dist(dist), id(id) {}
+    __host__ __device__ d_Neighbor(T dist, int id) : dist(dist), id(id) {}
 };
 
 #endif // HNSW_DEVICE_DATA_STRUCTURES_CUH

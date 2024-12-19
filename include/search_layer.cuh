@@ -77,10 +77,7 @@ __global__ void search_layer_kernel(
                 ef
             );
         }
-
-
     }
-
 }
 
 template <typename T = float>
@@ -142,8 +139,6 @@ SearchResult search_layer_launch(
     Layer& layer,
     size_t ds_size
 ) {
-    auto result = SearchResult();
-
     int vec_dim = query.size();
     
     size_t layer_len = layer.size();
@@ -226,13 +221,21 @@ SearchResult search_layer_launch(
         d_vec_dim
     );
 
-    
+    // Copy top_candidates back to host
+    d_Neighbor<T> results[ef];
+    cudaMemcpy(results, d_top_candidates, ef * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);    
 
     // Free memory
     cudaFree(d_layer_len);
+    for (size_t i = 0; i < layer_len; i++) {
+        cudaFree(d_layer_data_map[i]);
+    }
     cudaFree(d_layer_data_map);
     cudaFree(d_layer_n_neighbors);
     cudaFree(d_neighbors_map_size);
+    for (size_t i = 0; i < layer_len; i++) {
+        cudaFree(d_neighbors_map[i]);
+    }
     cudaFree(d_neighbors_map);
     cudaFree(d_query);
     cudaFree(d_start_node_id);
@@ -244,6 +247,8 @@ SearchResult search_layer_launch(
         delete[] neighbors_map[i];
     }
     delete[] neighbors_map;
+
+    return results;
 }
 
 #endif // HNSW_SEARCH_LAYER_CUH
