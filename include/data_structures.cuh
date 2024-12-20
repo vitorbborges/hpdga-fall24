@@ -92,7 +92,7 @@ namespace ds {
         T* data() {
             return x;
         }
-        // Const getter for the pointer to the underlying array (const version)
+        // Getter for the pointer to the underlying array (const)
         const T* data() const {
             return x;
         }
@@ -130,7 +130,7 @@ namespace ds {
     };
 
     struct Node {
-        const Data<>& data;
+        Data<> data;
         Neighbors neighbors; // TODO: implement this as an array for search stage
 
         explicit Node(const Data<>& data_) : data(data_) {}

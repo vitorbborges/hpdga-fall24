@@ -13,7 +13,7 @@
     this is done in order to prune the pq up to k
 */
 
-template <typename T = float>
+;template <typename T = float>
 class PriorityQueue {
 private:
     d_Neighbor<T>* neighbors;
@@ -24,8 +24,10 @@ public:
         neighbors(neighbors),
         size(0) {}
 
-    __device__ void inline swap(T& a, T& b) {
-        T c(a);
+    __device__ ~PriorityQueue() {}
+
+    __device__ void inline swap(d_Neighbor<T>& a, d_Neighbor<T>& b) {
+        d_Neighbor<T> c(a);
         a = b;
         b = c;
     }
@@ -104,14 +106,14 @@ public:
 
     __device__ d_Neighbor<T> pop_max() {
         if (size <= 2) return neighbors[0]; // Return root if only one element exists
-        Neighbor ret = neighbors[2];        // Index 2 contains the maximum
+        d_Neighbor<T> ret = neighbors[2];        // Index 2 contains the maximum
         deleteAt(2);
         return ret;
     }
 
     __device__ d_Neighbor<T> pop_min() {
         if (size <= 1) return neighbors[0]; // Return root if only one element exists
-        Neighbor ret = neighbors[1];        // Index 1 contains the minimum
+        d_Neighbor<T> ret = neighbors[1];        // Index 1 contains the minimum
         deleteAt(1);
         return ret;
     }
@@ -119,7 +121,7 @@ public:
     __device__ void print_heap() {
         int level = 1, count = 0;
         for (int i = 0; i < size; i++) {
-            printf("%d\t", neighbors[i]);
+            printf("%ld\t", neighbors[i].id);
             if (++count == level) {
                 printf("\n");
                 level <<= 1;
@@ -131,6 +133,18 @@ public:
 
     __device__ T get_size() {
         return size;
+    }
+
+    __device__ d_Neighbor<T>* get_neighbors() {
+        return neighbors;
+    }
+
+    __device__ d_Neighbor<T> operator [] (int idx) {
+        return neighbors[idx];
+    }
+
+    __device__ d_Neighbor<T> top() {
+        return neighbors[0];
     }
 }
 
