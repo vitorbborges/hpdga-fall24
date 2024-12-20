@@ -6,13 +6,13 @@
 template <typename T = float>
 struct d_Data {
     T* x;
-    long int id;
+    int id;
 
     // Default constructor
     __host__ __device__ d_Data() : x(nullptr), id(-1) {}
 
     // Parameterized constructor
-    __host__ __device__ d_Data(T* arr, long int id) : x(arr), id(id) {}
+    __host__ __device__ d_Data(T* arr, int id) : x(arr), id(id) {}
 
     // Copy constructor
     __host__ __device__ d_Data(const d_Data& other) 
@@ -56,11 +56,11 @@ struct d_Data {
 template <typename T = float>
 struct d_Neighbor {
     T dist;
-    long int id;
+    int id;
 
     __host__ __device__ d_Neighbor() : dist(0), id(-1) {}
 
-    __host__ __device__ d_Neighbor(T dist, long int id) : dist(dist), id(id) {}
+    __host__ __device__ d_Neighbor(T dist, int id) : dist(dist), id(id) {}
 
     // Explicit copy constructor for CUDA
     __host__ __device__ d_Neighbor(const d_Neighbor<T>& other) : dist(other.dist), id(other.id) {}
@@ -95,7 +95,7 @@ struct d_Node {
 
     __host__ __device__ d_Node() : data(), neighbors(nullptr), n_neighbors(0) {}
 
-    __host__ __device__ d_Node(T* arr, long int id, d_Neighbor<T>* neighbor_arr, int n_neighbors) : 
+    __host__ __device__ d_Node(T* arr, int id, d_Neighbor<T>* neighbor_arr, int n_neighbors) : 
         data(arr, id),
         neighbors(neighbor_arr),
         n_neighbors(n_neighbors) {}

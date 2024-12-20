@@ -48,7 +48,7 @@ int main() {
     const auto result_layer = search_layer_launch(
         queries[0],
         index.enter_node_id,
-        5,
+        10,
         index.layers[2],
         dataset.size()
     );

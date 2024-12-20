@@ -10,28 +10,27 @@
 
 #define EUCDIST_THREADS 32
 
-__global__ void euclidean_distance_simple(const float* vec1, const float* vec2, float* distance, size_t dimensions) {
+__global__ void euclidean_distance_simple(
+    const float* vec1,
+    const float* vec2,
+    float* distance_block,
+    int num_dims
+) {
     static __shared__ float shared[EUCDIST_THREADS];
-
-    unsigned int idx = threadIdx.x + blockIdx.x * blockDim.x;
-    if (idx >= dimensions) return;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     float diff = vec1[idx] - vec2[idx];
-
-
     shared[threadIdx.x] = diff * diff;
 
     __syncthreads();
 
     if (threadIdx.x == 0) {
-        float sum = 0;
+        float block_sum = 0;
         for (int i = 0; i < blockDim.x; i++) {
-            sum += shared[i];
+            block_sum += shared[i];
         }
-        printf("Sum: %f\n", sqrtf(sum));
-        distance[blockIdx.x] = sqrtf(sum);
+        distance_block[blockIdx.x + 1] = block_sum;
     }
-
     
 }
 
@@ -53,8 +52,9 @@ __global__ void search_layer_kernel(
     PriorityQueue<T> top_candidates_pq(top_candidates_array);
 
     size_t numBlocks = (*vec_dim + EUCDIST_THREADS - 1) / EUCDIST_THREADS;
-    T* dist_block = (T*)malloc(numBlocks * sizeof(T));
-    memset(dist_block, 0, numBlocks * sizeof(T));
+    T* dist_block = (T*)malloc((numBlocks + 1) * sizeof(T));
+    memset(dist_block, 0, (numBlocks + 1) * sizeof(T));
+    // TODO: for some reason it is impossible to write in the first position of the array, this emplains the +1
 
     euclidean_distance_simple<<<numBlocks, EUCDIST_THREADS>>>(
         query_data,
@@ -62,26 +62,26 @@ __global__ void search_layer_kernel(
         dist_block,
         *vec_dim
     );
+
     T dist_from_en = 0;
-    for (size_t i = 0; i < numBlocks; i++) {
-        printf("Distance from entry node: %f\n", dist_block[i]);
+    for (size_t i = 0; i < numBlocks + 1; i++) {
         dist_from_en += dist_block[i];
     }
-    printf("Total distance from entry node: %f\n", dist_from_en);
+    dist_from_en = sqrt(dist_from_en);
 
     d_Neighbor<T> start_node(dist_from_en, *start_node_id);
     candidates_pq.insert(start_node);
     top_candidates_pq.insert(start_node);
-    
-    d_Node<T> node = layer_data[*start_node_id];
-    printf("Neighbor id: %d\n", node.neighbors[0].id);
 
+    int count = 0;
     while (candidates_pq.get_size() > 0) {
-        d_Neighbor<T> nearest_candidate = candidates_pq.top(); // TODO: check if pop_max or pop_min
+        printf("Iteration: %d :", count++);
+        top_candidates_pq.print_heap();
+        d_Neighbor<T> nearest_candidate = candidates_pq.top();
         d_Node<T> nearest_candidate_node = layer_data[nearest_candidate.id];
-        candidates_pq.pop_max();
+        candidates_pq.pop_min();
 
-        if (nearest_candidate.dist > top_candidates_pq.top().dist) break; // TODO: check if pop_max or pop_min
+        if (nearest_candidate.dist > top_candidates_pq.top().dist) break;
 
         int n_neighbors = nearest_candidate_node.n_neighbors;
         if (n_neighbors > 0) {
@@ -102,11 +102,12 @@ __global__ void search_layer_kernel(
                     top_candidates_pq.insert(new_candidate);
 
                     if (top_candidates_pq.get_size() > *ef) {
-                        top_candidates_pq.pop_max();
+                        top_candidates_pq.pop_min();
                     }
                 }
             }
         }
+
     }
 }
 
@@ -121,7 +122,7 @@ __global__ void process_neighbors(
     T dist = 0;
 
     const size_t numBlocks = (*vec_dim + EUCDIST_THREADS - 1) / EUCDIST_THREADS;
-    euclidean_distance_gpu<<<numBlocks, EUCDIST_THREADS>>>(
+    euclidean_distance_simple<<<numBlocks, EUCDIST_THREADS>>>(
         query,
         layer_data[neighbors[idx].id].data.x,
         &dist,

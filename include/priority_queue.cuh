@@ -121,14 +121,14 @@ public:
     __device__ void print_heap() {
         int level = 1, count = 0;
         for (int i = 0; i < size; i++) {
-            printf("%ld\t", neighbors[i].id);
+            printf("(id: %d, dist:%f) :", neighbors[i].id, neighbors[i].dist);
             if (++count == level) {
                 printf("\n");
                 level <<= 1;
                 count = 0;
             }
         }
-        printf("\n");
+        printf("top_id : %d", neighbors[0].id);
     }
 
     __device__ T get_size() {
