@@ -27,9 +27,6 @@ __global__ void euclidean_distance_gpu(const T* vec1, const T* vec2, T* distance
     // Step 1: Compute partial sums strided
     T sum = 0;
     for (int i = thread_id; i < num_dims; i += blockDim.x) {
-        printf("i: %d\n", i);
-        T two = vec2[i];
-        printf("two: %f\n", two);
         T diff = vec1[i] - vec2[i];
         sum += diff * diff;  
     }
@@ -47,7 +44,7 @@ __global__ void euclidean_distance_gpu(const T* vec1, const T* vec2, T* distance
     }
 
     if (thread_id == 0) {
-        *distance = sqrtf(sum); 
+        atomicAdd(distance, sqrtf(sum));    
     }
 }
 

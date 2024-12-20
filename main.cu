@@ -52,6 +52,4 @@ int main() {
         index.layers[2],
         dataset.size()
     );
-
-    int a = 1;
 }

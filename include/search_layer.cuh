@@ -10,6 +10,31 @@
 
 #define EUCDIST_THREADS 32
 
+__global__ void euclidean_distance_simple(const float* vec1, const float* vec2, float* distance, size_t dimensions) {
+    static __shared__ float shared[EUCDIST_THREADS];
+
+    unsigned int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    if (idx >= dimensions) return;
+
+    float diff = vec1[idx] - vec2[idx];
+
+
+    shared[threadIdx.x] = diff * diff;
+
+    __syncthreads();
+
+    if (threadIdx.x == 0) {
+        float sum = 0;
+        for (int i = 0; i < blockDim.x; i++) {
+            sum += shared[i];
+        }
+        printf("Sum: %f\n", sqrtf(sum));
+        distance[blockIdx.x] = sqrtf(sum);
+    }
+
+    
+}
+
 template <typename T = float>
 __global__ void search_layer_kernel(
     T* query_data,
@@ -23,22 +48,26 @@ __global__ void search_layer_kernel(
     d_Neighbor<T>* top_candidates_array
 ) {
     // int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    printf("hey\n");
 
     PriorityQueue<T> candidates_pq(candidates_array);
     PriorityQueue<T> top_candidates_pq(top_candidates_array);
 
     size_t numBlocks = (*vec_dim + EUCDIST_THREADS - 1) / EUCDIST_THREADS;
-    T dist_from_en = 0;
-    T* entry_node_data = layer_data[*start_node_id].data.x;
-    printf("entry_node_data: %f\n", entry_node_data[0]);
-    euclidean_distance_gpu<<<numBlocks, EUCDIST_THREADS>>>(
+    T* dist_block = (T*)malloc(numBlocks * sizeof(T));
+    memset(dist_block, 0, numBlocks * sizeof(T));
+
+    euclidean_distance_simple<<<numBlocks, EUCDIST_THREADS>>>(
         query_data,
-        entry_node_data,
-        &dist_from_en,
+        layer_data[*start_node_id].data.x,
+        dist_block,
         *vec_dim
     );
-    printf("Distance from entry node: %f\n", dist_from_en);
+    T dist_from_en = 0;
+    for (size_t i = 0; i < numBlocks; i++) {
+        printf("Distance from entry node: %f\n", dist_block[i]);
+        dist_from_en += dist_block[i];
+    }
+    printf("Total distance from entry node: %f\n", dist_from_en);
 
     d_Neighbor<T> start_node(dist_from_en, *start_node_id);
     candidates_pq.insert(start_node);
@@ -166,34 +195,35 @@ auto search_layer_launch(
     cudaMemcpy(d_visited, visited, ds_size * sizeof(bool), cudaMemcpyHostToDevice);
     cudaMemcpy(d_vec_dim, &vec_dim, sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_layer_len, &layer_len, sizeof(size_t), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_layer_data, layer_data, layer_len * sizeof(d_Node<T>), cudaMemcpyHostToDevice);
 
-    // Allocate memory for x arrays on the device and copy data
     for (size_t i = 0; i < layer_len; ++i) {
         // Allocate memory for the data array (x) on the device
         T* d_data_array;
-        cudaMalloc(&d_data_array, vec_dim * sizeof(T)); // Assuming vec_dim is the size of each data array
+        cudaMalloc(&d_data_array, vec_dim * sizeof(T)); 
         cudaMemcpy(d_data_array, layer[i].data.data(), vec_dim * sizeof(T), cudaMemcpyHostToDevice);
         
-        // Get the number of neighbors for the current node
-        int neighbors_size = layer[i].neighbors.size();
-        
+        // Update the host-side layer_data with the device pointer
+        layer_data[i].data.x = d_data_array;
+    
         // Allocate memory for the neighbors array on the device
-        d_Neighbor<T>* d_neighbors_array;
-        cudaMalloc(&d_neighbors_array, neighbors_size * sizeof(d_Neighbor<T>));
-        
-        // Copy each neighbor's data to the device
-        for (size_t j = 0; j < neighbors_size; ++j) {
-            cudaMemcpy(&d_neighbors_array[j], &layer_data[i].neighbors[j], sizeof(d_Neighbor<T>), cudaMemcpyHostToDevice);
+        int neighbors_size = layer[i].neighbors.size();
+        d_Neighbor<T>* d_neighbors_array = nullptr;
+        if (neighbors_size > 0) {
+            cudaMalloc(&d_neighbors_array, neighbors_size * sizeof(d_Neighbor<T>));
+            
+            // Copy each neighbor's data to the device
+            cudaMemcpy(d_neighbors_array, layer[i].neighbors.data(), 
+                       neighbors_size * sizeof(d_Neighbor<T>), cudaMemcpyHostToDevice);
         }
-        
-        // Associate the d_data_array with the device d_Data<T> inside d_layer_data
-        d_layer_data[i].data.x = d_data_array;
-        
-        // Associate the d_neighbors_array with the device d_Node<T> inside d_layer_data
-        d_layer_data[i].neighbors = d_neighbors_array;
-        d_layer_data[i].n_neighbors = neighbors_size;
+    
+        // Update the host-side layer_data with the device neighbors pointer
+        layer_data[i].neighbors = d_neighbors_array;
+        layer_data[i].n_neighbors = neighbors_size;
     }
+    
+    // Copy the host-side layer_data array to the device memory (d_layer_data)
+    cudaMemcpy(d_layer_data, layer_data, layer_len * sizeof(d_Node<T>), cudaMemcpyHostToDevice);
+    
 
     // Launch kernel
     search_layer_kernel<<<1, 1>>>(
