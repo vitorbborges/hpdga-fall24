@@ -65,18 +65,41 @@ __global__ void search_layer_kernel(
 
     T dist_from_en = 0;
     for (size_t i = 0; i < numBlocks + 1; i++) {
+        printf("Dist block[%d]: %f\n", i, dist_block[i]);
         dist_from_en += dist_block[i];
     }
+    printf("Dist from entry node: %f\n", dist_from_en);
     dist_from_en = sqrt(dist_from_en);
+    printf("Dist from entry node: %f\n", dist_from_en);
 
     d_Neighbor<T> start_node(dist_from_en, *start_node_id);
     candidates_pq.insert(start_node);
     top_candidates_pq.insert(start_node);
 
+    top_candidates_pq.print_heap();
+
+    // d_Neighbor<T> example(0.0, 0);
+    // top_candidates_pq.insert(example);
+    // top_candidates_pq.print_heap();
+
+    d_Neighbor<T> example2(0.5, 1);
+    top_candidates_pq.insert(example2);
+    top_candidates_pq.print_heap();
+
+    d_Neighbor<T> example3(0.3, 2);
+    top_candidates_pq.insert(example3);
+    top_candidates_pq.print_heap();    
+
+    top_candidates_pq.pop_min();
+    top_candidates_pq.print_heap();
+
+    top_candidates_pq.pop_max();
+    top_candidates_pq.print_heap();
+
     int count = 0;
     while (candidates_pq.get_size() > 0) {
-        printf("Iteration: %d :", count++);
-        top_candidates_pq.print_heap();
+        // printf("Iteration: %d :", count++);
+        // top_candidates_pq.print_heap();
         d_Neighbor<T> nearest_candidate = candidates_pq.top();
         d_Node<T> nearest_candidate_node = layer_data[nearest_candidate.id];
         candidates_pq.pop_min();
@@ -119,17 +142,24 @@ __global__ void process_neighbors(
     const int* vec_dim
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    T dist = 0;
 
     const size_t numBlocks = (*vec_dim + EUCDIST_THREADS - 1) / EUCDIST_THREADS;
+    T* dist_block = (T*)malloc((numBlocks + 1) * sizeof(T));
+    memset(dist_block, 0, (numBlocks + 1) * sizeof(T));
+
     euclidean_distance_simple<<<numBlocks, EUCDIST_THREADS>>>(
         query,
         layer_data[neighbors[idx].id].data.x,
-        &dist,
+        dist_block,
         *vec_dim
     );
 
-    neighbors[idx].dist = dist;
+    T dist = 0;
+    for (size_t i = 0; i < numBlocks + 1; i++) {
+        dist += dist_block[i];
+    }
+
+    neighbors[idx].dist = sqrtf(dist);
 }
 
 template <typename T = float>

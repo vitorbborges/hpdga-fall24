@@ -7,7 +7,7 @@
 #define WARP_SIZE 32
 
 // Helper function for warp-level reduction
-;template <typename T = float>
+template <typename T = float>
 __inline__ __device__ T warpReduceSum(T val) {
     for (int offset = 16; offset > 0; offset /= 2) {
         val += __shfl_down_sync(0xFFFFFFFF, val, offset);
