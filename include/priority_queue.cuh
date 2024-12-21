@@ -56,21 +56,22 @@ public:
                 }
             }
 
-            // Grandparent adjustment
-            int grandparent = (idx - 3) / 4;
-            if (grandparent >= 0) {
-                if (neighbors[idx].dist < neighbors[grandparent].dist) {
-                    swap(neighbors[idx], neighbors[grandparent]);
-                    idx = grandparent;
-                } else if (neighbors[idx].dist > neighbors[grandparent + 1].dist) {
-                    swap(neighbors[idx], neighbors[grandparent + 1]);
-                    idx = grandparent + 1;
-                } else {
-                    break;
-                }
+        // Grandparent adjustment
+        int grandparent = (idx - 3) / 4;
+        if (grandparent >= 0) {
+            if (neighbors[idx].dist < neighbors[grandparent].dist) {
+                swap(neighbors[idx], neighbors[grandparent]);
+                idx = grandparent;
+            } else if (neighbors[idx].dist > neighbors[grandparent + 1].dist) {
+                swap(neighbors[idx], neighbors[grandparent + 1]);
+                idx = grandparent + 1;
             } else {
-                    break;
+                break;
             }
+        } else {
+                break;
+        }
+
         }
     }
 
@@ -118,15 +119,15 @@ public:
     }
 
     __device__ void print_heap() {
-        int level = 1, count = 0;
-        printf("top_id: [%d] :", top().id);
+        // int level = 1, count = 0;
+        printf("top_id: {%d}, top_dist: %f\n", top().id, top().dist);
         for (int i = 0; i < size; i++) {
             printf("(id: %d, dist: %f) ", neighbors[i].id, neighbors[i].dist);
-            if (++count == level) {
-                printf("\n");
-                level <<= 1;
-                count = 0;
-            }
+            // if (++count == level) {
+            //     printf("\n");
+            //     level <<= 1;
+            //     count = 0;
+            // }
         }
         printf("\n");
     }

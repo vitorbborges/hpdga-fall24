@@ -62,6 +62,7 @@ __global__ void search_layer_kernel(
         dist_block,
         *vec_dim
     );
+    // TODO: use optimized euclidean distance kernel
 
     T dist_from_en = 0;
     for (size_t i = 0; i < numBlocks + 1; i++) {
@@ -78,9 +79,9 @@ __global__ void search_layer_kernel(
 
     top_candidates_pq.print_heap();
 
-    // d_Neighbor<T> example(0.0, 0);
-    // top_candidates_pq.insert(example);
-    // top_candidates_pq.print_heap();
+    d_Neighbor<T> example(0.0, 0);
+    top_candidates_pq.insert(example);
+    top_candidates_pq.print_heap();
 
     d_Neighbor<T> example2(0.5, 1);
     top_candidates_pq.insert(example2);
