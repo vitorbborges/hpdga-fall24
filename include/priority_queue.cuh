@@ -13,113 +13,103 @@
     this is done in order to prune the pq up to k
 */
 
-template<class T>
-__device__ void inline swap(T& a, T& b){
-    T c(a); 
-    a=b; 
-    b=c;
-}
+#define MAX_HEAP_SIZE 100
 
-template<class T>
-__device__ void insert(T* smmh, int& size, T& entry) {
-    int idx = size;
-    smmh[size++] = entry;
+// Define the Neighbor struct
+struct Neighbor {
+    float distance;
+    int id;
 
-    while (idx > 0) {
-        int parent = (idx - 1) / 2;
+    __host__ __device__ bool operator<(const Neighbor& other) const {
+        return distance < other.distance; // Max-heap based on distance
+    }
 
-        // Adjust based on level: even = min-level, odd = max-level
-        if ((idx & 1) == 0) { // Right child (max-level)
-            if (smmh[idx] > smmh[parent]) { 
-                swap(smmh[idx], smmh[parent]);
-                idx = parent; 
-                continue; 
-            }
-        } else { // Left child (min-level)
-            if (smmh[idx] < smmh[parent]) { 
-                swap(smmh[idx], smmh[parent]); 
-                idx = parent; 
-                continue; 
-            }
-        }
+    __host__ __device__ bool operator>(const Neighbor& other) const {
+        return distance > other.distance; // Min-heap based on distance
+    }
+};
 
-        // Grandparent adjustment
-        int grandparent = (idx - 3) / 4;
-        if (grandparent >= 0) {
-            if (smmh[idx] < smmh[grandparent]) {
-                swap(smmh[idx], smmh[grandparent]);
-                idx = grandparent;
-            } else if (smmh[idx] > smmh[grandparent + 1]) {
-                swap(smmh[idx], smmh[grandparent + 1]);
-                idx = grandparent + 1;
+class PriorityQueue {
+private:
+    Neighbor* heap;
+    int* size;
+    bool reverse;
+
+    __device__ bool compare(const Neighbor& a, const Neighbor& b) {
+        return reverse ? a < b : a > b;
+    }
+
+    __device__ void heapify_up(int index) {
+        while (index > 0) {
+            int parent = (index - 1) / 2;
+            if (compare(heap[index], heap[parent])) {
+                Neighbor temp = heap[index];
+                heap[index] = heap[parent];
+                heap[parent] = temp;
+                index = parent;
             } else {
                 break;
             }
-        } else {
-            break;
         }
     }
-}
 
-template<class T>
-__device__ void deleteAt(T* smmh, int idx, int& size) {
-    smmh[idx] = smmh[--size];
-    int current = idx;
+    __device__ void heapify_down(int index) {
+        while (index < *size) {
+            int left = 2 * index + 1;
+            int right = 2 * index + 2;
+            int target = index;
 
-    while (current < size) {
-        int left = 2 * current + 1;
-        int right = 2 * current + 2;
+            if (left < *size && compare(heap[left], heap[target])) {
+                target = left;
+            }
+            if (right < *size && compare(heap[right], heap[target])) {
+                target = right;
+            }
 
-        if (left >= size) break;
-
-        int swapIdx = left;
-
-        // Determine whether to adjust for min or max levels
-        if ((current & 1) == 0) { // Even level -> Max
-            if (right < size && smmh[right] > smmh[left]) swapIdx = right;
-            if (smmh[current] < smmh[swapIdx]) {
-                swap(smmh[current], smmh[swapIdx]);
-                current = swapIdx;
-            } else break;
-        } else { // Odd level -> Min
-            if (right < size && smmh[right] < smmh[left]) swapIdx = right;
-            if (smmh[current] > smmh[swapIdx]) {
-                swap(smmh[current], smmh[swapIdx]);
-                current = swapIdx;
-            } else break;
+            if (target != index) {
+                Neighbor temp = heap[index];
+                heap[index] = heap[target];
+                heap[target] = temp;
+                index = target;
+            } else {
+                break;
+            }
         }
     }
-}
 
-template<class T>
-__device__ T pop_max(T* smmh, int& size) {
-    if (size <= 2) return smmh[0]; // Return root if only one element exists
-    T ret = smmh[2];               // Index 2 contains the maximum
-    deleteAt(smmh, 2, size);
-    return ret;
-}
+public:
+    __device__ PriorityQueue(Neighbor* shared_heap, int* shared_size, bool is_reverse)
+        : heap(shared_heap), size(shared_size), reverse(is_reverse) {
+        if (threadIdx.x == 0) {
+            *size = 0; // Initialize size in shared memory
+        }
+        __syncthreads();
+    }
 
-template<class T>
-__device__ T pop_min(T* smmh, int& size) {
-    if (size <= 1) return smmh[0]; // Return root if only one element exists
-    T ret = smmh[1];               // Index 1 contains the minimum
-    deleteAt(smmh, 1, size);
-    return ret;
-}
+    __device__ void insert(const Neighbor& value) {
+        if (*size >= MAX_HEAP_SIZE) return;
+        heap[*size] = value;
+        heapify_up((*size)++);
+    }
 
-template<class T>
-__device__ void print_heap(T* smmh, int size) {
-    int level = 1, count = 0;
-    for (int i = 0; i < size; i++) {
-        printf("%d\t", smmh[i]);
-        if (++count == level) {
+    __device__ Neighbor extract_top() {
+        if (*size == 0) return { -1.0f, -1 }; // Heap underflow
+        Neighbor top_value = heap[0];
+        heap[0] = heap[--(*size)];
+        heapify_down(0);
+        return top_value;
+    }
+
+    __device__ void print_heap() {
+        if (threadIdx.x == 0) {
+            printf("Heap: ");
+            for (int i = 0; i < *size; i++) {
+                printf("(%f, %d) ", heap[i].distance, heap[i].id);
+            }
             printf("\n");
-            level <<= 1;
-            count = 0;
         }
+        __syncthreads();
     }
-    printf("\n");
-}
-
+};
 
 #endif // HNSW_PRIORITY_QUEUE_CUH
