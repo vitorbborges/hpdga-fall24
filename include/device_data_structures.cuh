@@ -50,6 +50,11 @@ struct d_Data {
     __host__ __device__ T* data() const {
         return x;
     }
+
+    // x setter
+    __host__ __device__ void set_data(T* arr) {
+        x = arr;
+    }
 };
 
 
@@ -108,11 +113,10 @@ struct d_Node {
         neighbors(neighbor_arr),
         n_neighbors(n_neighbors) {}
 
-    // __host__ __device__ ~d_Node() {
-    //     if (neighbors != nullptr) {
-    //         delete[] neighbors;
-    //     }
-    // }
-}
+    // data setter
+    __host__ __device__ void set_data(T* arr) {
+        data.set_data(arr);
+    }
+};
 
 #endif // HNSW_DEVICE_DATA_STRUCTURES_CUH

@@ -10,30 +10,6 @@
 
 #define EUCDIST_THREADS 32
 
-__global__ void euclidean_distance_simple(
-    const float* vec1,
-    const float* vec2,
-    float* distance_block,
-    int num_dims
-) {
-    static __shared__ float shared[EUCDIST_THREADS];
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-    float diff = vec1[idx] - vec2[idx];
-    shared[threadIdx.x] = diff * diff;
-
-    __syncthreads();
-
-    if (threadIdx.x == 0) {
-        float block_sum = 0;
-        for (int i = 0; i < blockDim.x; i++) {
-            block_sum += shared[i];
-        }
-        distance_block[blockIdx.x + 1] = block_sum;
-    }
-    
-}
-
 template <typename T = float>
 __global__ void search_layer_kernel(
     T* query_data,
@@ -42,96 +18,59 @@ __global__ void search_layer_kernel(
     bool* visited,
     int* vec_dim,
     size_t* layer_len,
-    d_Node<T>* layer_data,
-    d_Neighbor<T>* candidates_array,
-    d_Neighbor<T>* top_candidates_array
+    d_Node<T>* layer_data
 ) {
-    // int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    PriorityQueue<T> candidates_pq(candidates_array);
-    PriorityQueue<T> top_candidates_pq(top_candidates_array);
+    __shared__ d_Neighbor<T> candidates_array[MAX_HEAP_SIZE];
+    __shared__ int candidates_size;
+    __shared__ d_Neighbor<T> top_candidates_array[MAX_HEAP_SIZE];
+    __shared__ int top_candidates_size;
+    // TODO: solve warning #20054-D: dynamic initialization is not supported for a function-scope 
+    // static __shared__ variable within a __device__/__global__ function
 
-    size_t numBlocks = (*vec_dim + EUCDIST_THREADS - 1) / EUCDIST_THREADS;
-    T* dist_block = (T*)malloc((numBlocks + 1) * sizeof(T));
-    memset(dist_block, 0, (numBlocks + 1) * sizeof(T));
-    // TODO: for some reason it is impossible to write in the first position of the array, this emplains the +1
+    __syncthreads();
 
-    euclidean_distance_simple<<<numBlocks, EUCDIST_THREADS>>>(
+    PriorityQueue<T> q(candidates_array, &candidates_size, MIN_HEAP);
+    PriorityQueue<T> topk(top_candidates_array, &top_candidates_size, MAX_HEAP);
+    
+    T start_dist = euclidean_distance(
         query_data,
         layer_data[*start_node_id].data.x,
-        dist_block,
         *vec_dim
     );
     // TODO: use optimized euclidean distance kernel
 
-    T dist_from_en = 0;
-    for (size_t i = 0; i < numBlocks + 1; i++) {
-        printf("Dist block[%d]: %f\n", i, dist_block[i]);
-        dist_from_en += dist_block[i];
-    }
-    printf("Dist from entry node: %f\n", dist_from_en);
-    dist_from_en = sqrt(dist_from_en);
-    printf("Dist from entry node: %f\n", dist_from_en);
+    q.insert({start_dist, *start_node_id});
 
-    d_Neighbor<T> start_node(dist_from_en, *start_node_id);
-    candidates_pq.insert(start_node);
-    top_candidates_pq.insert(start_node);
+    while (q.get_size() > 0) {
+        d_Neighbor<T> now = q.pop();
+        printf("now: %d\n", now.id);
 
-    top_candidates_pq.print_heap();
-
-    d_Neighbor<T> example(0.0, 0);
-    top_candidates_pq.insert(example);
-    top_candidates_pq.print_heap();
-
-    d_Neighbor<T> example2(0.5, 1);
-    top_candidates_pq.insert(example2);
-    top_candidates_pq.print_heap();
-
-    d_Neighbor<T> example3(0.3, 2);
-    top_candidates_pq.insert(example3);
-    top_candidates_pq.print_heap();    
-
-    top_candidates_pq.pop_min();
-    top_candidates_pq.print_heap();
-
-    top_candidates_pq.pop_max();
-    top_candidates_pq.print_heap();
-
-    int count = 0;
-    while (candidates_pq.get_size() > 0) {
-        // printf("Iteration: %d :", count++);
-        // top_candidates_pq.print_heap();
-        d_Neighbor<T> nearest_candidate = candidates_pq.top();
-        d_Node<T> nearest_candidate_node = layer_data[nearest_candidate.id];
-        candidates_pq.pop_min();
-
-        if (nearest_candidate.dist > top_candidates_pq.top().dist) break;
-
-        int n_neighbors = nearest_candidate_node.n_neighbors;
-        if (n_neighbors > 0) {
-            d_Neighbor<T>* nearest_candidate_neighbors = nearest_candidate_node.neighbors;
-            process_neighbors<<<1, n_neighbors>>>(
-                query_data,
-                layer_data,
-                nearest_candidate_neighbors,
-                vec_dim
-            );
-
-            for (size_t i = 0; i < n_neighbors; i++) {
-                if (visited[nearest_candidate_neighbors[i].id]) continue;
-                if (nearest_candidate_neighbors[i].dist < top_candidates_pq.top().dist ||
-                    top_candidates_pq.get_size() < *ef) {
-                    d_Neighbor<T> new_candidate(nearest_candidate_neighbors[i].dist, nearest_candidate_neighbors[i].id);
-                    candidates_pq.insert(new_candidate);
-                    top_candidates_pq.insert(new_candidate);
-
-                    if (top_candidates_pq.get_size() > *ef) {
-                        top_candidates_pq.pop_min();
-                    }
-                }
-            }
+        if (topk.top().dist < now.dist) {
+            break;
+        } else {
+            topk.insert(now);
         }
 
+        d_Node<T> now_node = layer_data[now.id];
+
+        d_Neighbor<T>* now_neighbors = now_node.neighbors;
+        // TODO: optimize removing visited neighbors from this array.
+
+        process_neighbors<<<1, now_node.n_neighbors>>>(
+            query_data,
+            layer_data,
+            now_neighbors,
+            vec_dim
+        );
+
+        for (size_t i = 0; i < now_node.n_neighbors; i++) {
+            if (!visited[now_neighbors[i].id]) {
+                visited[now_neighbors[i].id] = true;
+                q.insert(now_neighbors[i]);
+            }
+        }
+        q.print_heap();
     }
 }
 
@@ -144,23 +83,16 @@ __global__ void process_neighbors(
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    const size_t numBlocks = (*vec_dim + EUCDIST_THREADS - 1) / EUCDIST_THREADS;
-    T* dist_block = (T*)malloc((numBlocks + 1) * sizeof(T));
-    memset(dist_block, 0, (numBlocks + 1) * sizeof(T));
-
-    euclidean_distance_simple<<<numBlocks, EUCDIST_THREADS>>>(
+    T dist = euclidean_distance(
         query,
         layer_data[neighbors[idx].id].data.x,
-        dist_block,
         *vec_dim
     );
+    // TODO: use optimized euclidean distance kernel
 
-    T dist = 0;
-    for (size_t i = 0; i < numBlocks + 1; i++) {
-        dist += dist_block[i];
-    }
+    __syncthreads();
 
-    neighbors[idx].dist = sqrtf(dist);
+    neighbors[idx].dist = dist;
 }
 
 template <typename T = float>
@@ -195,7 +127,7 @@ auto search_layer_launch(
     bool visited[ds_size] = {false};
     visited[start_node_id] = true;
 
-    d_Neighbor<T> top_candidates[ef]; // TODO: check if here is ef or k
+    d_Neighbor<T> h_results[ef]; // TODO: check if here is ef or k
     
     // Create device pointers
     T* d_query_data;
@@ -205,8 +137,8 @@ auto search_layer_launch(
     int* d_vec_dim;
     size_t* d_layer_len;
     d_Node<T>* d_layer_data;
-    d_Neighbor<T>* d_candidates;
-    d_Neighbor<T>* d_top_candidates;
+    d_Neighbor<T>* d_results;
+
 
     // Allocate memory on the device
     cudaMalloc(&d_query_data, vec_dim * sizeof(T));
@@ -216,9 +148,6 @@ auto search_layer_launch(
     cudaMalloc(&d_vec_dim, sizeof(int));
     cudaMalloc(&d_layer_len, sizeof(size_t));
     cudaMalloc(&d_layer_data, layer_len * sizeof(d_Node<T>));
-    cudaMalloc(&d_candidates, ef * sizeof(d_Neighbor<T>)); // TODO: check if here is ef or k
-    cudaMalloc(&d_top_candidates, ef * sizeof(d_Neighbor<T>)); // TODO: check if here is ef or k
-
 
     // Copy data to the device
     cudaMemcpy(d_query_data, query.data(), vec_dim * sizeof(T), cudaMemcpyHostToDevice);
@@ -235,7 +164,7 @@ auto search_layer_launch(
         cudaMemcpy(d_data_array, layer[i].data.data(), vec_dim * sizeof(T), cudaMemcpyHostToDevice);
         
         // Update the host-side layer_data with the device pointer
-        layer_data[i].data.x = d_data_array;
+        layer_data[i].set_data(d_data_array);
     
         // Allocate memory for the neighbors array on the device
         int neighbors_size = layer[i].neighbors.size();
@@ -265,9 +194,7 @@ auto search_layer_launch(
         d_visited,
         d_vec_dim,
         d_layer_len,
-        d_layer_data,
-        d_candidates,
-        d_top_candidates
+        d_layer_data
     );
     // catch errors
     cudaError_t error = cudaGetLastError();
@@ -277,11 +204,10 @@ auto search_layer_launch(
 
     // Copy results back to host
     // cudaMemcpy(visited, d_visited, ds_size * sizeof(bool), cudaMemcpyDeviceToHost);
-    cudaMemcpy(top_candidates, d_top_candidates, ef * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
     
-    for (int i = 0; i < ef; i++) {
-        results.result.emplace_back(top_candidates[i].dist, top_candidates[i].id);
-    }
+    // for (int i = 0; i < ef; i++) {
+    //     results.result.emplace_back(top_candidates[i].dist, top_candidates[i].id);
+    // }
 
     // Free memory
     cudaFree(d_query_data);
@@ -293,13 +219,7 @@ auto search_layer_launch(
     cudaFree(d_layer_data);
     delete[] layer_data;
 
-    std::vector<int> top_candidates_ids;
-    for (int i = 0; i < ef; i++) {
-        top_candidates_ids.push_back(top_candidates[i].id);
-    }
-
-
-    return top_candidates_ids;
+    return results;
 }
 
 #endif // HNSW_SEARCH_LAYER_CUH

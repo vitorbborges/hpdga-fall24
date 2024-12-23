@@ -15,7 +15,7 @@
     this is done in order to prune the pq up to k
 */
 
-#define MAX_HEAP_SIZE 10
+#define MAX_HEAP_SIZE 1
 
 // Define an enum for heap type
 enum HeapType {
@@ -23,13 +23,15 @@ enum HeapType {
     MAX_HEAP
 };
 
+
+template <typename T = float>
 class PriorityQueue {
 private:
-    d_Neighbor* heap;
+    d_Neighbor<T>* heap;
     int* size;
     HeapType heapType;
 
-    __device__ bool compare(const d_Neighbor& a, const d_Neighbor& b) {
+    __device__ bool compare(const d_Neighbor<T>& a, const d_Neighbor<T>& b) {
         return heapType == MIN_HEAP ? a < b : a > b;
     }
 
@@ -37,7 +39,7 @@ private:
         while (index > 0) {
             int parent = (index - 1) / 2;
             if (compare(heap[index], heap[parent])) {
-                d_Neighbor temp = heap[index];
+                d_Neighbor<T> temp = heap[index];
                 heap[index] = heap[parent];
                 heap[parent] = temp;
                 index = parent;
@@ -61,7 +63,7 @@ private:
             }
 
             if (target != index) {
-                d_Neighbor temp = heap[index];
+                d_Neighbor<T> temp = heap[index];
                 heap[index] = heap[target];
                 heap[target] = temp;
                 index = target;
@@ -72,7 +74,7 @@ private:
     }
 
 public:
-    __device__ PriorityQueue(d_Neighbor* shared_heap, int* shared_size, HeapType type)
+    __device__ PriorityQueue(d_Neighbor<T>* shared_heap, int* shared_size, HeapType type)
         : heap(shared_heap), size(shared_size), heapType(type) {
         if (threadIdx.x == 0) {
             *size = 0; // Initialize size in shared memory
@@ -80,26 +82,25 @@ public:
         __syncthreads();
     }
 
-    __device__ void insert(const d_Neighbor& value) {
+    __device__ void insert(const d_Neighbor<T>& value) {
         if (*size >= MAX_HEAP_SIZE) {
             // Remove the bottom element
-            d_Neighbor bottom_value = heap[--(*size)];
+            d_Neighbor<T> bottom_value = heap[--(*size)];
             heapify_down(0);
-            printf("Removed Bottom: (%f, %d)\n", bottom_value.distance, bottom_value.id);
         }
         heap[*size] = value;
         heapify_up((*size)++);
     }
 
-    __device__ d_Neighbor pop() {
+    __device__ d_Neighbor<T> pop() {
         if (*size == 0) return { -1.0f, -1 }; // Heap underflow
-        d_Neighbor top_value = heap[0];
+        d_Neighbor<T> top_value = heap[0];
         heap[0] = heap[--(*size)];
         heapify_down(0);
         return top_value;
     }
 
-    __device__ d_Neighbor top() {
+    __device__ d_Neighbor<T> top() {
         if (*size == 0) return { -1.0f, -1 }; // Heap underflow
         return heap[0];
     }
@@ -108,11 +109,16 @@ public:
         if (threadIdx.x == 0) {
             printf("Heap: ");
             for (int i = 0; i < *size; i++) {
-                printf("(%f, %d) ", heap[i].distance, heap[i].id);
+                printf("(%f, %d) ", heap[i].dist, heap[i].id);
             }
-            printf("\n");
+            printf("top_id: [%d], size: [%d]\n", top().id, *size);
         }
         __syncthreads();
     }
+
+    __device__ int get_size() {
+        return *size;
+    }
 };
 
+#endif // HNSW_PRIORITY_QUEUE_CUH

@@ -45,11 +45,26 @@ int main() {
     const auto build_time = get_duration(start, end);
     cout << "index_construction: " << build_time / 1000 << " [ms]" << endl;
 
+    int a = 1;
+    int l_c = 2;
+
     const auto result_layer = search_layer_launch(
         queries[0],
         index.enter_node_id,
-        10,
-        index.layers[2],
+        a,
+        index.layers[l_c],
         dataset.size()
     );
+
+    auto cpu_result = index.search_layer(
+        queries[0],
+        index.enter_node_id,
+        a,
+        l_c
+    );
+
+    for (size_t i = 0; i < a; i++) {
+        cout << "(" << cpu_result.result[i].dist << ", " << cpu_result.result[i].id << ") ";
+    }
+    cout << endl;
 }
