@@ -13,7 +13,7 @@
     this is done in order to prune the pq up to k
 */
 
-#define MAX_HEAP_SIZE 100
+#define MAX_HEAP_SIZE 10
 
 // Define the Neighbor struct
 struct Neighbor {
@@ -29,14 +29,20 @@ struct Neighbor {
     }
 };
 
+// Define an enum for heap type
+enum HeapType {
+    MIN_HEAP,
+    MAX_HEAP
+};
+
 class PriorityQueue {
 private:
     Neighbor* heap;
     int* size;
-    bool reverse;
+    HeapType heapType;
 
     __device__ bool compare(const Neighbor& a, const Neighbor& b) {
-        return reverse ? a < b : a > b;
+        return heapType == MIN_HEAP ? a < b : a > b;
     }
 
     __device__ void heapify_up(int index) {
@@ -78,8 +84,8 @@ private:
     }
 
 public:
-    __device__ PriorityQueue(Neighbor* shared_heap, int* shared_size, bool is_reverse)
-        : heap(shared_heap), size(shared_size), reverse(is_reverse) {
+    __device__ PriorityQueue(Neighbor* shared_heap, int* shared_size, HeapType type)
+        : heap(shared_heap), size(shared_size), heapType(type) {
         if (threadIdx.x == 0) {
             *size = 0; // Initialize size in shared memory
         }
@@ -87,17 +93,27 @@ public:
     }
 
     __device__ void insert(const Neighbor& value) {
-        if (*size >= MAX_HEAP_SIZE) return;
+        if (*size >= MAX_HEAP_SIZE) {
+            // Remove the bottom element
+            Neighbor bottom_value = heap[--(*size)];
+            heapify_down(0);
+            printf("Removed Bottom: (%f, %d)\n", bottom_value.distance, bottom_value.id);
+        }
         heap[*size] = value;
         heapify_up((*size)++);
     }
 
-    __device__ Neighbor extract_top() {
+    __device__ Neighbor pop() {
         if (*size == 0) return { -1.0f, -1 }; // Heap underflow
         Neighbor top_value = heap[0];
         heap[0] = heap[--(*size)];
         heapify_down(0);
         return top_value;
+    }
+
+    __device__ Neighbor top() {
+        if (*size == 0) return { -1.0f, -1 }; // Heap underflow
+        return heap[0];
     }
 
     __device__ void print_heap() {
