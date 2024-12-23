@@ -25,13 +25,12 @@ set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCH})
 message(STATUS "Using CUDA architecture: ${CUDA_ARCH}")
 
 # Include directories
-include_directories(include)
+include_directories(${CMAKE_SOURCE_DIR}/include)
 
 # Source files
 set(SOURCES
     main.cu
-    include/cpu_eucdist.cu
-    include/tree_reduction_eucdist.cu)
+    include/euclidean_distance.cu)
 
 # Create the executable
 add_executable(${PROJECT_NAME} ${SOURCES})
