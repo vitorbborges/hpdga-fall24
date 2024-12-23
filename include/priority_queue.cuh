@@ -5,6 +5,8 @@
 #include <device_launch_parameters.h>
 #include <cstdio>
 
+#include "device_data_structures.cuh"
+
 /*
     gpu priority queue implementation based on the paper
     Symmetric Min-Max heap: A simpler data structure for double-ended priority queue
@@ -15,20 +17,6 @@
 
 #define MAX_HEAP_SIZE 10
 
-// Define the Neighbor struct
-struct Neighbor {
-    float distance;
-    int id;
-
-    __host__ __device__ bool operator<(const Neighbor& other) const {
-        return distance < other.distance; // Max-heap based on distance
-    }
-
-    __host__ __device__ bool operator>(const Neighbor& other) const {
-        return distance > other.distance; // Min-heap based on distance
-    }
-};
-
 // Define an enum for heap type
 enum HeapType {
     MIN_HEAP,
@@ -37,11 +25,11 @@ enum HeapType {
 
 class PriorityQueue {
 private:
-    Neighbor* heap;
+    d_Neighbor* heap;
     int* size;
     HeapType heapType;
 
-    __device__ bool compare(const Neighbor& a, const Neighbor& b) {
+    __device__ bool compare(const d_Neighbor& a, const d_Neighbor& b) {
         return heapType == MIN_HEAP ? a < b : a > b;
     }
 
@@ -49,7 +37,7 @@ private:
         while (index > 0) {
             int parent = (index - 1) / 2;
             if (compare(heap[index], heap[parent])) {
-                Neighbor temp = heap[index];
+                d_Neighbor temp = heap[index];
                 heap[index] = heap[parent];
                 heap[parent] = temp;
                 index = parent;
@@ -73,7 +61,7 @@ private:
             }
 
             if (target != index) {
-                Neighbor temp = heap[index];
+                d_Neighbor temp = heap[index];
                 heap[index] = heap[target];
                 heap[target] = temp;
                 index = target;
@@ -84,7 +72,7 @@ private:
     }
 
 public:
-    __device__ PriorityQueue(Neighbor* shared_heap, int* shared_size, HeapType type)
+    __device__ PriorityQueue(d_Neighbor* shared_heap, int* shared_size, HeapType type)
         : heap(shared_heap), size(shared_size), heapType(type) {
         if (threadIdx.x == 0) {
             *size = 0; // Initialize size in shared memory
@@ -92,10 +80,10 @@ public:
         __syncthreads();
     }
 
-    __device__ void insert(const Neighbor& value) {
+    __device__ void insert(const d_Neighbor& value) {
         if (*size >= MAX_HEAP_SIZE) {
             // Remove the bottom element
-            Neighbor bottom_value = heap[--(*size)];
+            d_Neighbor bottom_value = heap[--(*size)];
             heapify_down(0);
             printf("Removed Bottom: (%f, %d)\n", bottom_value.distance, bottom_value.id);
         }
@@ -103,15 +91,15 @@ public:
         heapify_up((*size)++);
     }
 
-    __device__ Neighbor pop() {
+    __device__ d_Neighbor pop() {
         if (*size == 0) return { -1.0f, -1 }; // Heap underflow
-        Neighbor top_value = heap[0];
+        d_Neighbor top_value = heap[0];
         heap[0] = heap[--(*size)];
         heapify_down(0);
         return top_value;
     }
 
-    __device__ Neighbor top() {
+    __device__ d_Neighbor top() {
         if (*size == 0) return { -1.0f, -1 }; // Heap underflow
         return heap[0];
     }

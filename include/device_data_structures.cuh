@@ -65,6 +65,14 @@ struct d_Neighbor {
     // Explicit copy constructor for CUDA
     __host__ __device__ d_Neighbor(const d_Neighbor<T>& other) : dist(other.dist), id(other.id) {}
 
+    // Comparison operators
+    __host__ __device__ bool operator<(const d_Neighbor& other) const {
+        return dist < other.dist; // Max-heap based on distance
+    }
+    __host__ __device__ bool operator>(const d_Neighbor& other) const {
+        return dist > other.dist; // Min-heap based on distance
+    }
+
     // Copy assignment operator
     __host__ __device__ d_Neighbor<T>& operator=(const d_Neighbor<T>& other) {
         if (this != &other) {
