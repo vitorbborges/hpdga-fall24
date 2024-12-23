@@ -1,9 +1,9 @@
-#pragma once
-#ifndef PRIORITY_QUEUE_CUH
-#define PRIORITY_QUEUE_CUH
+#ifndef HNSW_PRIORITY_QUEUE_CUH
+#define HNSW_PRIORITY_QUEUE_CUH
 
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
+#include <cstdio>
 
 /*
     gpu priority queue implementation based on the paper
@@ -122,4 +122,4 @@ __device__ void print_heap(T* smmh, int size) {
 }
 
 
-#endif // PRIORITY_QUEUE_CUH
+#endif // HNSW_PRIORITY_QUEUE_CUH
