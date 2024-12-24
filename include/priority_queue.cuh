@@ -15,7 +15,7 @@
     this is done in order to prune the pq up to k
 */
 
-#define MAX_HEAP_SIZE 1
+#define MAX_HEAP_SIZE 5
 
 // Define an enum for heap type
 enum HeapType {
@@ -83,13 +83,18 @@ public:
     }
 
     __device__ void insert(const d_Neighbor<T>& value) {
-        if (*size >= MAX_HEAP_SIZE) {
-            // Remove the bottom element
-            d_Neighbor<T> bottom_value = heap[--(*size)];
-            heapify_down(0);
+        if (*size < MAX_HEAP_SIZE) {
+            // Insert directly if the heap is not full
+            heap[*size] = value;
+            heapify_up((*size)++);
+        } else {
+            // Compare the new value with the worst element (last element in the heap)
+            if (compare(value, heap[*size - 1])) {
+                // Replace the worst element
+                heap[*size - 1] = value;
+                heapify_up(*size - 1); // Restore heap property upwards
+            }
         }
-        heap[*size] = value;
-        heapify_up((*size)++);
     }
 
     __device__ d_Neighbor<T> pop() {

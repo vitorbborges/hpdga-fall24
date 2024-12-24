@@ -45,8 +45,8 @@ int main() {
     const auto build_time = get_duration(start, end);
     cout << "index_construction: " << build_time / 1000 << " [ms]" << endl;
 
-    int a = 1;
-    int l_c = 2;
+    int a = 5;
+    int l_c = 3;
 
     const auto result_layer = search_layer_launch(
         queries[0],
