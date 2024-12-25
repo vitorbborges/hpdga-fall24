@@ -22,15 +22,18 @@ __global__ void search_layer_kernel(
     int* candidates_size,
     d_Neighbor<T>* top_candidates_array,
     int* top_candidates_size,
-    size_t* layer_len
+    size_t* layer_len,
+    int* ef
 ) {
     int globalIdx = blockIdx.x * blockDim.x + threadIdx.x;
     int tid = threadIdx.x;
     int bid = blockIdx.x;
 
     // Shared memory for query data
-    static __shared__ T query_data[VEC_DIM];
-    copy_array_to_shared(query, query_data, VEC_DIM);
+    __shared__ T shared_query[VEC_DIM];
+    if (globalIdx < VEC_DIM) {
+        shared_query[globalIdx] = query[globalIdx];
+    }
 
     // Priority queues initialization
     PriorityQueue<T> q(candidates_array, candidates_size, MIN_HEAP);
@@ -38,16 +41,17 @@ __global__ void search_layer_kernel(
 
     // calculate distance from start node to query
     if (bid == 0) {
-        T start_dist = euclidean_opt(
-            query_data,
+        T start_dist = euclidean_opt<T>(
+            shared_query,
             dataset,
             VEC_DIM,
             0,
-            start_node_id
+            *start_node_id
         );
 
         if (globalIdx == 0) {
             q.insert({start_dist, *start_node_id});
+            printf("start dist: %f\n", start_dist);
         }
     }
     __syncthreads();
@@ -79,7 +83,7 @@ __global__ void search_layer_kernel(
         T distance[K];
         if (bid <= n_neighbors) {
             T dist = euclidean_opt(
-                query_data,
+                shared_query,
                 dataset,
                 VEC_DIM,
                 0,
@@ -101,11 +105,16 @@ __global__ void search_layer_kernel(
             }
         }
         __syncthreads();
-    }  
+    }
+    // Print final heap
+    if (globalIdx == 0) {
+        printf("final heap: ");
+        topk.print_heap();
+    }
 }
 
 template <typename T = float>
-__inline__ __device__ void copy_array_to_shared(
+__device__ void copy_array_to_shared(
     T* array,
     T* shared,
     size_t size
@@ -133,7 +142,7 @@ auto search_layer_launch(
     // Allocate query on device
     T* d_query;
     cudaMalloc(&d_query, VEC_DIM * sizeof(T));
-    cudaMemcpy(d_query, query.x, VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_query, query.data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
 
     // Allocate fixed degree graph adjency list on device
     int* d_adjaency_list;
@@ -150,7 +159,7 @@ auto search_layer_launch(
     T* d_dataset;
     cudaMalloc(&d_dataset, layer_len * VEC_DIM * sizeof(T));
     for (Node node: layer) {
-        cudaMemcpy(d_dataset + node.data.id() * VEC_DIM, node.data.x, VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_dataset + node.data.id() * VEC_DIM, node.data.data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
     }
 
     // Allocate priority queues on device
@@ -169,6 +178,11 @@ auto search_layer_launch(
     cudaMalloc(&d_layer_len, sizeof(size_t));
     cudaMemcpy(d_layer_len, &layer_len, sizeof(size_t), cudaMemcpyHostToDevice);
 
+    // Target output lenght
+    int* d_ef;
+    cudaMalloc(&d_ef, sizeof(int));
+    cudaMemcpy(d_ef, &ef, sizeof(int), cudaMemcpyHostToDevice);
+
     // Launch kernel
     search_layer_kernel<<<K, VEC_DIM>>>(
         d_start_node_id,
@@ -179,12 +193,24 @@ auto search_layer_launch(
         candidates_size,
         top_candidates_array,
         top_candidates_size,
-        d_layer_len
+        d_layer_len,
+        d_ef
     );
 
 
     // Free memory
     cudaFree(d_adjaency_list);
+    cudaFree(d_dataset);
+    cudaFree(d_query);
+    cudaFree(d_start_node_id);
+    cudaFree(candidates_array);
+    cudaFree(candidates_size);
+    cudaFree(top_candidates_array);
+    cudaFree(top_candidates_size);
+    cudaFree(d_layer_len);
+    cudaFree(d_ef);
+
+    return 0;
 }
 
 
