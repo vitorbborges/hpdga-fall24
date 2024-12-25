@@ -29,7 +29,7 @@ __global__ void search_layer_kernel(
     PriorityQueue<T> q(candidates_array, &candidates_size, MIN_HEAP);
     PriorityQueue<T> topk(top_candidates_array, &top_candidates_size, MAX_HEAP);
 
-    T start_dist = euclidean_opt( // IMPORTANT NOTE: this function is running forever
+    T start_dist = euclidean_opt(
         query_data,
         layer_data[*start_node_id].data.x,
         *vec_dim,
@@ -58,11 +58,11 @@ __global__ void search_layer_kernel(
         __syncthreads();
 
         // Update topk
-        // if (topk.get_size() == *ef && topk.top().dist < now_dist) {
-        //     break;
-        // } else if (globalIdx == 0) {
-        //     topk.insert(now);
-        // }
+        if (topk.get_size() == *ef && topk.top().dist < now_dist) {
+            break;
+        } else if (globalIdx == 0) {
+            topk.insert(now);
+        }
 
         __syncthreads();
 

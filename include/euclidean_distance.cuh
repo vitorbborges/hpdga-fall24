@@ -62,7 +62,7 @@ __inline__ __device__ T euclidean_opt(const T* vec1, const T* vec2, const int di
         T diff = vec1[vec_idx1 * dimensions + i] - vec2[vec_idx2 * dimensions + i];
         val += diff * diff;
     }
-    printf("val: %f, thread: %d\n", val, threadIdx.x);
+
     // Warp-level reduction
     val = warp_reduce_sum(val);
     // Write partial sums to shared memory

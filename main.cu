@@ -1,6 +1,6 @@
 #include <hnsw.cuh>
 #include <utils.cuh>
-// #include "search_layer.cuh"
+#include "search_layer2.cuh"
 
 using namespace utils;
 using namespace hnsw;
@@ -48,12 +48,7 @@ int main() {
     cout << "index size:" << index.layers[0].size() << endl;
     cout << "datset size:" << dataset.size() << endl;
 
-    for (Node i : index.layers[0]) {
-        if (i.data.id() == 9971) {
-            int count = 0;
-            for (Neighbor j : i.neighbors) {
-                cout << count++ << ": [" << j.id << "] ";
-            }
-        }
+    for (Layer layer : index.layers) {
+        cout << "layer size:" << layer.size() << endl;
     }
 }

@@ -15,7 +15,7 @@
     this is done in order to prune the pq up to k
 */
 
-#define MAX_HEAP_SIZE 5
+#define MAX_HEAP_SIZE 100
 
 // Define an enum for heap type
 enum HeapType {
@@ -75,12 +75,7 @@ private:
 
 public:
     __device__ PriorityQueue(d_Neighbor<T>* shared_heap, int* shared_size, HeapType type)
-        : heap(shared_heap), size(shared_size), heapType(type) {
-        if (threadIdx.x == 0) {
-            *size = 0; // Initialize size in shared memory
-        }
-        __syncthreads();
-    }
+        : heap(shared_heap), size(shared_size), heapType(type) {}
 
     __device__ void insert(const d_Neighbor<T>& value) {
         if (*size < MAX_HEAP_SIZE) {
