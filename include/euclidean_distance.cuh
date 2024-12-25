@@ -52,16 +52,17 @@ T euclidean_distance_cpu(const T* vec1, const T* vec2, int dimensions) {
 }
 
 template <typename T>
-__inline__ __device__ T euclidean_opt(const T* vec1, const T* vec2, const int dimensions, const int vec_idx) {
+__inline__ __device__ T euclidean_opt(const T* vec1, const T* vec2, const int dimensions, const int vec_idx1, const int vec_idx2) {
     __shared__ T shared[32]; // Shared memory for partial sums
     int warp = threadIdx.x / 32; // Warp index
     int lane = threadIdx.x % 32; // Lane index within the warp
     T val = 0;
     // Correct input indexing to process the correct vector
     for (int i = threadIdx.x; i < dimensions; i += blockDim.x) {
-        T diff = vec1[vec_idx * dimensions + i] - vec2[vec_idx * dimensions + i];
+        T diff = vec1[vec_idx1 * dimensions + i] - vec2[vec_idx2 * dimensions + i];
         val += diff * diff;
     }
+    printf("val: %f, thread: %d\n", val, threadIdx.x);
     // Warp-level reduction
     val = warp_reduce_sum(val);
     // Write partial sums to shared memory
@@ -135,7 +136,7 @@ __global__ void batch_gpu(const float* vec1, const float* vec2, float* distances
     int vec_idx = blockIdx.x; // Each block processes one vector pair
     if (vec_idx >= num_vectors) return; // Out-of-bounds check
     // Compute distance using the optimized `euclidean_opt` function
-    float distance = euclidean_opt(vec1, vec2, dimensions, vec_idx);
+    float distance = euclidean_opt(vec1, vec2, dimensions, vec_idx, vec_idx);
     // Write the result to global memory
     if (threadIdx.x == 0) {
         distances[vec_idx] = distance;

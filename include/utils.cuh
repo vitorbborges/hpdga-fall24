@@ -18,6 +18,9 @@ using namespace ds;
 
 namespace utils {
     template <typename T = float>
+    using DistanceFunction = function<float(Data<T>, Data<T>)>;
+
+    template <typename T = float>
     auto euclidean_distance(const Data<T>& p1, const Data<T>& p2) {
         float result = 0;
         for (size_t i = 0; i < p1.size(); i++) {

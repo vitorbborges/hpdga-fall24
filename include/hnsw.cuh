@@ -1,29 +1,25 @@
+#ifndef HNSW_HNSW_HPP
+#define HNSW_HNSW_HPP
+
 #include <queue>
 #include <utils.cuh>
 #include <random>
-// #include "euclidean_distance.cuh"
-#include "process_neighbors.cuh"
-#include "data_structures.cuh"
-#include "search_layer.cuh"
 
 using namespace std;
 using namespace utils;
-using namespace ds;
 
 namespace hnsw {
-
     struct HNSW {
         const int m, m_max_0, ef_construction;
         const double m_l;
         const bool extend_candidates, keep_pruned_connections;
 
-        long unsigned ds_size;
-        size_t vec_dim;
         int enter_node_id;
         int enter_node_level;
         vector<Layer> layers;
         map<int, vector<int>> layer_map;
         Dataset<> dataset;
+        DistanceFunction<> calc_dist;
 
         mt19937 engine;
         uniform_real_distribution<double> unif_dist;
@@ -34,87 +30,13 @@ namespace hnsw {
                 ef_construction(ef_construction),
                 extend_candidates(extend_candidates),
                 keep_pruned_connections(keep_pruned_connections),
-                ds_size(0), vec_dim(0),
+                calc_dist(euclidean_distance<float>),
                 engine(42), unif_dist(0.0, 1.0) {}
 
         const Node& get_enter_node() const { return layers.back()[enter_node_id]; }
 
         int get_new_node_level() {
             return static_cast<int>(-log(unif_dist(engine)) * m_l);
-        }
-
-        auto search_layer_cuda(const Data<>& query, int start_node_id, int ef, int l_c) {
-            auto result = SearchResult();
-
-            bool visited[dataset.size()] = {false}; // TODO: check if this can be abstracted to class data member
-            visited[start_node_id] = true;
-
-            priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
-            priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
-
-            const auto& start_node = layers[l_c][start_node_id];
-            const auto dist_from_en = euclidean_distance<float>(query, start_node.data);
-
-            candidates.emplace(dist_from_en, start_node_id);
-            top_candidates.emplace(dist_from_en, start_node_id);
-
-            while (!candidates.empty()) {
-                const auto nearest_candidate = candidates.top();
-                const auto& nearest_candidate_node = layers[l_c][nearest_candidate.id];
-                candidates.pop();
-
-                if (nearest_candidate.dist > top_candidates.top().dist) break;
-
-                const size_t neighbors_n =  nearest_candidate_node.neighbors.size();
-
-                int neighbors_id[neighbors_n];
-                for (int i = 0; i < neighbors_n; i++) {
-                    neighbors_id[i] = nearest_candidate_node.neighbors[i].id;
-                }
-
-                float neighbors_flat[neighbors_n * vec_dim];
-                for (int i = 0; i < neighbors_n; i++) {
-                    for (int j = 0; j < vec_dim; j++) {
-                        neighbors_flat[i * vec_dim + j] = layers[l_c][nearest_candidate_node.neighbors[i].id].data.data()[j];
-                    }
-                }
-                // TODO: parallelize this flatten?
-
-                float dist_from_neighbors[neighbors_n] = {0};
-
-                if (neighbors_n > 0){
-                    process_neighbors_cuda(
-                        ds_size,
-                        vec_dim,
-                        query.data(),
-                        visited,
-                        neighbors_n,
-                        neighbors_id,
-                        neighbors_flat,
-                        dist_from_neighbors
-                    );
-                }
-
-                for (int i = 0; i < neighbors_n; i++) {
-                    if (visited[neighbors_id[i]]) continue;
-                    if (dist_from_neighbors[i] < top_candidates.top().dist ||
-                        top_candidates.size() < ef) {
-                        candidates.emplace(dist_from_neighbors[i], neighbors_id[i]);
-                        top_candidates.emplace(dist_from_neighbors[i], neighbors_id[i]);
-
-                        if (top_candidates.size() > ef) top_candidates.pop();
-                    }
-                }
-            }
-
-            while (!top_candidates.empty()) {
-                result.result.emplace_back(top_candidates.top());
-                top_candidates.pop();
-            }
-
-            reverse(result.result.begin(), result.result.end());
-
-            return result;
         }
 
         auto search_layer(const Data<>& query, int start_node_id, int ef, int l_c) {
@@ -127,17 +49,15 @@ namespace hnsw {
             priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
 
             const auto& start_node = layers[l_c][start_node_id];
-            const auto dist_from_en = euclidean_distance<float>(query, start_node.data);
+            const auto dist_from_en = calc_dist(query, start_node.data);
 
             candidates.emplace(dist_from_en, start_node_id);
             top_candidates.emplace(dist_from_en, start_node_id);
 
-            int count = 0;
             while (!candidates.empty()) {
                 const auto nearest_candidate = candidates.top();
                 const auto& nearest_candidate_node = layers[l_c][nearest_candidate.id];
                 candidates.pop();
-                cout << "nearest candidate id: " << nearest_candidate.id << endl;
 
                 if (nearest_candidate.dist > top_candidates.top().dist) break;
 
@@ -146,8 +66,7 @@ namespace hnsw {
                     visited[neighbor.id] = true;
 
                     const auto& neighbor_node = layers[l_c][neighbor.id];
-                    const auto dist_from_neighbor = euclidean_distance<float>(query, neighbor_node.data);
-                    cout << "neighbor id: " << neighbor.id << " dist: " << dist_from_neighbor << endl;
+                    const auto dist_from_neighbor = calc_dist(query, neighbor_node.data);
 
                     if (dist_from_neighbor < top_candidates.top().dist ||
                         top_candidates.size() < ef) {
@@ -174,7 +93,7 @@ namespace hnsw {
             priority_queue<Neighbor, vector<Neighbor>, CompGreater>
                     candidates, discarded_candidates;
 
-            bool added[dataset.size()] = {false};
+            vector<bool> added(dataset.size());
             added[query.id()] = true;
 
             // init candidates
@@ -186,41 +105,15 @@ namespace hnsw {
 
             if (extend_candidates) {
                 for (const auto& candidate : initial_candidates) {
+                    if (added[candidate.id]) continue;
+                    added[candidate.id] = true;
+
                     const auto& candidate_node = layer[candidate.id];
-
-                    const size_t neighbors_n = candidate_node.neighbors.size();
-
-                    int neighbors_id[neighbors_n];
-                    for (int i = 0; i < neighbors_n; i++) {
-                        neighbors_id[i] = candidate_node.neighbors[i].id;
-                    }
-
-                    float neighbors_flat[neighbors_n * vec_dim];
-                    for (int i = 0; i < neighbors_n; i++) {
-                        for (int j = 0; j < vec_dim; j++) {
-                            neighbors_flat[i * vec_dim + j] = layer[neighbors_id[i]].data.data()[j];
-                        }
-                    }
-
-                    float dist_from_neighbors[neighbors_n] = {0};
-
-                    if (neighbors_n > 0){
-                        process_neighbors_cuda(
-                            ds_size,
-                            vec_dim,
-                            query.data(),
-                            added,
-                            neighbors_n,
-                            neighbors_id,
-                            neighbors_flat,
-                            dist_from_neighbors
-                        );
-                    }
-
-                    for (int i = 0; i < neighbors_n; i++) {
-                        if (added[neighbors_id[i]]) continue;
-                        added[neighbors_id[i]] = true;
-                        candidates.emplace(dist_from_neighbors[i], neighbors_id[i]);
+                    for (const auto& neighbor : candidate_node.neighbors) {
+                        const auto& neighbor_node = layer[neighbor.id];
+                        const auto dist_from_neighbor =
+                                calc_dist(query, neighbor_node.data);
+                        candidates.emplace(dist_from_neighbor, neighbor.id);
                     }
                 }
             }
@@ -239,8 +132,7 @@ namespace hnsw {
                 bool good = true;
                 for (const auto& neighbor : neighbors) {
                     const auto& neighbor_node = layer[neighbor.id];
-                    const auto dist = euclidean_distance<float>(candidate_node.data, neighbor_node.data);
-                                        // TODO: change euclidean_distance to cuda version
+                    const auto dist = calc_dist(candidate_node.data, neighbor_node.data);
 
                     if (dist < candidate.dist) {
                         good = false;
@@ -313,7 +205,7 @@ namespace hnsw {
 
                 if (l_c == 0) // if we arrived at layer 0 we can skip the following step
                     break;
-
+                
                 // repeat the operation taking into consideration the nearest neighbour of new_data  
                 start_node_id = neighbors[0].id;
             }
@@ -338,11 +230,7 @@ namespace hnsw {
 
         void build(const Dataset<>& dataset_) {
             dataset = dataset_;
-            ds_size = dataset.size();
             for (const auto& data : dataset){
-                if (data.id() == 0) {
-                    vec_dim = dataset[data.id()].size();
-                }
                 insert(data);
             }
             cout << "Index construction completed." << endl;
@@ -353,7 +241,7 @@ namespace hnsw {
             // search in upper layers
             auto start_id_layer = enter_node_id;
             for (int l_c = enter_node_level; l_c >= 1; --l_c) {
-                const auto result_layer = search_layer_cuda(query, start_id_layer, 1, l_c);
+                const auto result_layer = search_layer(query, start_id_layer, 1, l_c);
                 const auto& nn_id_layer = result_layer.result[0].id;
                 start_id_layer = nn_id_layer;
             }
@@ -361,7 +249,7 @@ namespace hnsw {
             const auto& nn_upper_layer = layers[1][start_id_layer];
 
             // search in base layer
-            const auto result_layer = search_layer_cuda(query, start_id_layer, ef, 0);
+            const auto result_layer = search_layer(query, start_id_layer, ef, 0);
             const auto candidates = result_layer.result;
             for (const auto& candidate : candidates) {
                 result.result.emplace_back(candidate);
@@ -372,3 +260,5 @@ namespace hnsw {
         }
     };
 }
+
+#endif //HNSW_HNSW_HPP

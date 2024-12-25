@@ -21,84 +21,72 @@ __global__ void search_layer_kernel(
     int globalIdx = blockIdx.x * blockDim.x + threadIdx.x;
     int tid = threadIdx.x;
 
-    static __shared__ d_Neighbor<T> candidates_array[MAX_HEAP_SIZE];
+    extern __shared__ d_Neighbor<T> candidates_array[];
     __shared__ int candidates_size;
-    static __shared__ d_Neighbor<T> top_candidates_array[MAX_HEAP_SIZE];
+    extern __shared__ d_Neighbor<T> top_candidates_array[];
     __shared__ int top_candidates_size;
 
     PriorityQueue<T> q(candidates_array, &candidates_size, MIN_HEAP);
     PriorityQueue<T> topk(top_candidates_array, &top_candidates_size, MAX_HEAP);
 
-    printf("hey!1\n");
+    T start_dist = euclidean_opt( // IMPORTANT NOTE: this function is running forever
+        query_data,
+        layer_data[*start_node_id].data.x,
+        *vec_dim,
+        0,
+        0
+    );
 
     if (globalIdx == 0) {
-        T start_dist = euclidean_opt( // IMPORTANT NOTE: this function is running forever
-            query_data,
-            layer_data[*start_node_id].data.x,
-            *vec_dim,
-            0
-        );
-
         q.insert({start_dist, *start_node_id});
     }
-    __syncthreads();
-
-    printf("hey!2\n");
 
     while (q.get_size() > 0) {
         __syncthreads();
 
-        // Get the current node
+        // Get the current node information
         d_Neighbor<T> now = q.pop();
         d_Node<T> now_node = layer_data[now.id];
 
-        // if (globalIdx == 0) {
-        //     __shared__ d_Neighbor<T> now = q.pop();
-        //     __shared__ d_Node<T> now_node = layer_data[now.id];
-        // }
-        // __syncthreads();
-
-        // Copy the current node's data (vector entries) to shared memory
+        // Copy the current node neighbor's data (vector entries) to shared memory
         extern __shared__ T now_neighbors_data[];
         if (tid < now_node.n_neighbors) {
             for (size_t i = 0; i < *vec_dim; i++) {
-                now_neighbors_data[tid * *vec_dim + i] = now_node.data.x[i];
+                now_neighbors_data[tid * (*vec_dim) + i] = now_node.data.x[i];
             }
         }
         __syncthreads();
 
         // Update topk
-        if (globalIdx == 0) {
-            if (topk.get_size() == *ef && topk.top().dist < now.dist) {
-                break;
-            } else {
-                topk.insert(now);
-            }
-        }
+        // if (topk.get_size() == *ef && topk.top().dist < now_dist) {
+        //     break;
+        // } else if (globalIdx == 0) {
+        //     topk.insert(now);
+        // }
+
         __syncthreads();
 
         // BULK neighbors distance to query calculations
-        extern __shared__ d_Neighbor<T> now_neighbors[];
-        __shared__ unsigned int n_added_neighbors;
-        if (tid < now_node.n_neighbors && !visited[now_node.neighbors[tid].id]) {
+        extern __shared__ T now_distances[];
+        for (size_t i = 0; i < now_node.n_neighbors; i++) {
             T dist = euclidean_opt(
                 query_data,
                 now_neighbors_data,
                 *vec_dim,
-                tid
+                0,
+                i
             );
-            n_added_neighbors = atomicAdd(&n_added_neighbors, 1);
-            now_neighbors[tid] = {dist, now_node.neighbors[tid].id};
+            now_distances[i] = dist;
         }
         // TODO: optimize removing visited neighbors (bloom filter?)
         __syncthreads();
 
         // Insert neighbors to the heap
         if (globalIdx == 0) {
-            for (size_t i = 0; i < n_added_neighbors; i++) {
-                if (!visited[now_neighbors[i].id]) {
-                    visited[now_neighbors[i].id] = true;
-                    q.insert(now_neighbors[i]);
+            for (size_t i = 0; i < now_node.n_neighbors; i++) {
+                if (!visited[now_node.neighbors[i].id]) {
+                    visited[now_node.neighbors[i].id] = true;
+                    //q.insert({now_distances[i], now_neighbors_ids[i]});
                 }
             }
         }

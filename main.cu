@@ -1,6 +1,6 @@
 #include <hnsw.cuh>
 #include <utils.cuh>
-#include "search_layer.cuh"
+// #include "search_layer.cuh"
 
 using namespace utils;
 using namespace hnsw;
@@ -45,26 +45,15 @@ int main() {
     const auto build_time = get_duration(start, end);
     cout << "index_construction: " << build_time / 1000 << " [ms]" << endl;
 
-    int a = 5;
-    int l_c = 3;
+    cout << "index size:" << index.layers[0].size() << endl;
+    cout << "datset size:" << dataset.size() << endl;
 
-    const auto result_layer = search_layer_launch(
-        queries[0],
-        index.enter_node_id,
-        a,
-        index.layers[l_c],
-        dataset.size()
-    );
-
-    auto cpu_result = index.search_layer(
-        queries[0],
-        index.enter_node_id,
-        a,
-        l_c
-    );
-
-    for (size_t i = 0; i < a; i++) {
-        cout << "(" << cpu_result.result[i].dist << ", " << cpu_result.result[i].id << ") ";
+    for (Node i : index.layers[0]) {
+        if (i.data.id() == 9971) {
+            int count = 0;
+            for (Neighbor j : i.neighbors) {
+                cout << count++ << ": [" << j.id << "] ";
+            }
+        }
     }
-    cout << endl;
 }
