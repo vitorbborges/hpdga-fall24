@@ -49,8 +49,10 @@ int main() {
         queries[0],
         index.enter_node_id,
         5,
-        index.layers[2],
-        dataset.size()
+        index.layers,
+        2,
+        dataset.size(),
+        dataset
     );
 
     auto result = index.search_layer(
