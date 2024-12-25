@@ -16,11 +16,8 @@ __global__ void test_priority_queue(Neighbor* data_points, int num_points, HeapT
         Neighbor top = pq.top();
         printf("Accessed Top (without extraction): (%f, %d)\n", top.distance, top.id);
 
-        top = pq.pop();
-        printf("Extracted Top: (%f, %d)\n", top.distance, top.id);
-        pq.print_heap();
-
         pq.insert({30.0, 4});
+        pq.print_heap();
         pq.insert({90.0, 5});
         pq.print_heap();
 

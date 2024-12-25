@@ -13,7 +13,7 @@
     this is done in order to prune the pq up to k
 */
 
-#define MAX_HEAP_SIZE 10
+#define MAX_HEAP_SIZE 3
 
 // Define the Neighbor struct
 struct Neighbor {
