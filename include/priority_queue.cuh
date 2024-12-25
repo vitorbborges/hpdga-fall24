@@ -93,12 +93,6 @@ public:
     }
 
     __device__ void insert(const Neighbor& value) {
-        if (*size >= MAX_HEAP_SIZE) {
-            // Remove the bottom element
-            Neighbor bottom_value = heap[--(*size)];
-            heapify_down(0);
-            printf("Removed Bottom: (%f, %d)\n", bottom_value.distance, bottom_value.id);
-        }
         heap[*size] = value;
         heapify_up((*size)++);
     }
