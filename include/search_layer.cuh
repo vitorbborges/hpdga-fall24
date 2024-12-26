@@ -17,7 +17,7 @@ using namespace ds;
 template <typename T = float>
 __global__ void search_layer_kernel(
     T* queries,
-    int* start_node_id,
+    int* start_ids,
     int* adjaecy_list,
     T* dataset,
     int* ef,
@@ -27,6 +27,7 @@ __global__ void search_layer_kernel(
     int bidx = blockIdx.x;
 
     T* query = queries + bidx * VEC_DIM;
+    int start_node_id = start_ids[bidx];
 
     // Shared memory for query data
     static __shared__ T shared_query[VEC_DIM];
@@ -49,20 +50,20 @@ __global__ void search_layer_kernel(
     // calculate distance from start node to query and add to queue
     T start_dist = euclidean_distance_gpu<T>(
         shared_query,
-        dataset + (*start_node_id) * VEC_DIM,
+        dataset + start_node_id * VEC_DIM,
         VEC_DIM
     );
     __syncthreads();
 
     if (tidx == 0) {
-        q.insert({start_dist, *start_node_id});
+        q.insert({start_dist, start_node_id});
     }
     __syncthreads();
 
     // Shared memory for visited nodes
     bool shared_visited[DATASET_SIZE];
     if (tidx == 0) {
-        shared_visited[*start_node_id] = true;
+        shared_visited[start_node_id] = true;
     }
 
     // Main loop
@@ -154,10 +155,12 @@ SearchResults search_layer_launch(
         cudaMemcpy(d_queries + i * VEC_DIM, queries[i].data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
     }
 
-    // Allocate start node id on device
-    int* d_start_node_id;
-    cudaMalloc(&d_start_node_id, sizeof(int));
-    cudaMemcpy(d_start_node_id, &start_node_id, sizeof(int), cudaMemcpyHostToDevice);
+    // Allocate initial search id of each query on device
+    int* d_start_ids;
+    cudaMalloc(&d_start_ids, queries.size() * sizeof(int));
+    int support_array[queries.size()]; // create support array to ease memory copy
+    std::fill(support_array, support_array + queries.size(), start_node_id);
+    cudaMemcpy(d_start_ids, support_array, queries.size() * sizeof(int), cudaMemcpyHostToDevice);
 
     // Allocate fixed degree graph adjency list on device
     int* d_adjaency_list;
@@ -194,7 +197,7 @@ SearchResults search_layer_launch(
     // Launch kernel
     search_layer_kernel<<<queries.size(), VEC_DIM>>>(
         d_queries,
-        d_start_node_id,
+        d_start_ids,
         d_adjaency_list,
         d_dataset,
         d_ef,
@@ -205,7 +208,7 @@ SearchResults search_layer_launch(
     cudaMemcpy(result, d_result, ef * queries.size() * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
 
     // Free memory
-    cudaFree(d_start_node_id);
+    cudaFree(d_start_ids);
     cudaFree(d_queries);
     cudaFree(d_adjaency_list);
     cudaFree(d_dataset);
