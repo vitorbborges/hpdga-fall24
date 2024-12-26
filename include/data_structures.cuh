@@ -92,7 +92,7 @@ namespace ds {
         T* data() {
             return x;
         }
-        // Const getter for the pointer to the underlying array (const version)
+        // Getter for the pointer to the underlying array (const)
         const T* data() const {
             return x;
         }
@@ -130,8 +130,8 @@ namespace ds {
     };
 
     struct Node {
-        const Data<>& data;
-        Neighbors neighbors;
+        Data<> data;
+        Neighbors neighbors; // TODO: implement this as an array for search stage
 
         explicit Node(const Data<>& data_) : data(data_) {}
     };
@@ -174,6 +174,49 @@ namespace ds {
             }
         }
     };
+
+    template <typename T = float>
+struct d_Neighbor {
+    T dist;
+    int id;
+
+    __host__ __device__ d_Neighbor() : dist(0), id(-1) {}
+
+    __host__ __device__ d_Neighbor(T dist, int id) : dist(dist), id(id) {}
+
+    // Explicit copy constructor for CUDA
+    __host__ __device__ d_Neighbor(const d_Neighbor<T>& other) : dist(other.dist), id(other.id) {}
+
+    // Comparison operators
+    __host__ __device__ bool operator<(const d_Neighbor& other) const {
+        return dist < other.dist; // Max-heap based on distance
+    }
+    __host__ __device__ bool operator>(const d_Neighbor& other) const {
+        return dist > other.dist; // Min-heap based on distance
+    }
+
+    // Copy assignment operator
+    __host__ __device__ d_Neighbor<T>& operator=(const d_Neighbor<T>& other) {
+        if (this != &other) {
+            dist = other.dist;
+            id = other.id;
+        }
+        return *this;
+    }
+
+    // Move assignment operator
+    __host__ __device__ d_Neighbor<T>& operator=(d_Neighbor<T>&& other) noexcept {
+        if (this != &other) {
+            dist = std::move(other.dist);
+            id = std::move(other.id);
+        }
+        return *this;
+    }
+
+    // Explicit move constructor
+    __host__ __device__ d_Neighbor(d_Neighbor<T>&& other) noexcept : dist(std::move(other.dist)), id(std::move(other.id)) {}
+};
+
 }
 
 #endif // HNSW_DATA_STRUCTURES_CUH
