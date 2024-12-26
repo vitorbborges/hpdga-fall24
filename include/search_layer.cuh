@@ -195,8 +195,6 @@ auto search_layer_launch(
         d_result
     );
 
-    
-
     // copy result back to host
     cudaMemcpy(result, d_result, ef * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
 
