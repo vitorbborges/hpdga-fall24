@@ -1,6 +1,9 @@
 #include <hnsw.cuh>
 #include <utils.cuh>
-#include "search_layer.cuh"
+
+#include "knn_search.cuh"
+
+#define REPETITIONS 1
 
 using namespace utils;
 using namespace hnsw;
@@ -13,7 +16,7 @@ int main() {
     int k = 100;
     int m = 16;
     int ef_construction = 100;
-    // int ef = 100;
+    int ef = 100;
 
     // SIFT10k (small) - 10,000	base / 100 query / 128 dim
     const string data_path = base_dir + "datasets/siftsmall/siftsmall_base.fvecs";
@@ -45,13 +48,11 @@ int main() {
     const auto build_time = get_duration(start, end);
     cout << "index_construction: " << build_time / 1000 << " [ms]" << endl;
 
-
     // CPU Calculation
     long total_time_cpu = 0;
     SearchResults results(n_query);
     // Simulating REPETITIONS * n_query search procedure (during dev you can
     // reduce REPETITIONS = 1 for fast testing)
-
     cout << "Start searching CPU" << endl;
     for (int rep = 0; rep < REPETITIONS; rep++) {
         for (int i = 0; i < n_query; i++) {
@@ -62,20 +63,15 @@ int main() {
         auto q_end = get_now();
         total_time_cpu += get_duration(q_start, q_end);
 
-    cout << "cuda results: " << endl;
-
-    for (SearchResult sr: search_results.results) {
-        for (Neighbor n: sr.result) {
-            std::cout << "(" << n.dist << ", " << n.id << ") ";
+        result.recall = calc_recall(result.result, ground_truth[query.id()], k);
+        results[i] = result;
         }
-        std::cout << std::endl;
     }
     cout << "time for " << REPETITIONS * n_query
         << " queries: " << total_time_cpu / 1000 << " [ms]" << endl;
-
+        
     // GPU Calculation
     long total_time_gpu = 0;
-
     cout << "Start searching GPU" << endl;
 
     auto q_start = get_now();
@@ -84,9 +80,7 @@ int main() {
     );
     auto q_end = get_now();
     total_time_gpu += get_duration(q_start, q_end);
-
     cout << "time for " << REPETITIONS * n_query
         << " queries: " << total_time_gpu / 1000 << " [ms]" << endl;
-
     
 }

@@ -24,8 +24,6 @@ SearchResults knn_search(
     constant_mallocs(
         d_queries,
         queries,
-        d_start_node_id,
-        start_node_id,
         d_ef,
         ef,
         d_dataset,
@@ -33,15 +31,23 @@ SearchResults knn_search(
         ds_size
     );
 
+    // Allocate initial id of entry node of each query on device
+    int start_ids[queries.size()];
+    std::fill(start_ids, start_ids + queries.size(), start_node_id);
+
+
     // iterate upper layers
     for (int l_c = layers.size() - 1; l_c >= 0; l_c--) {
 
         // create device pointers
+        int* d_start_ids;
         int* d_adjaency_list;
         d_Neighbor<T>* d_results;
 
         // layer allocations accure for each layer
         layer_mallocs(
+            d_start_ids,
+            start_ids,
             d_adjaency_list,
             layers[l_c],
             ds_size,
@@ -53,7 +59,7 @@ SearchResults knn_search(
         // Launch kernel
         search_layer_kernel<<<queries.size(), VEC_DIM>>>(
             d_queries,
-            d_start_node_id,
+            d_start_ids,
             d_adjaency_list,
             d_dataset,
             1,
@@ -67,7 +73,13 @@ SearchResults knn_search(
             queries.size()
         );
 
+        // Update start_ids for next layer
+        for (size_t i = 0; i < queries.size(); i++) {
+            start_ids[i] = search_results[i].result[0].id;
+        }
+
         // Free memory
+        cudaFree(d_start_ids);
         cudaFree(d_adjaency_list);
         cudaFree(d_results);
     }
@@ -121,8 +133,6 @@ template <typename T = float>
 void constant_mallocs(
     T* d_queries,
     const Dataset<T>& queries,
-    int* d_start_node_id,
-    const int& start_node_id,
     int* d_ef,
     const int& ef,
     T* d_dataset,
@@ -134,10 +144,6 @@ void constant_mallocs(
     for (size_t i = 0; i < queries.size(); i++) {
         cudaMemcpy(d_queries + i * VEC_DIM, queries[i].data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
     }
-
-    // Allocate start node id on device
-    cudaMalloc(&d_start_node_id, sizeof(int));
-    cudaMemcpy(d_start_node_id, &start_node_id, sizeof(int), cudaMemcpyHostToDevice);
 
     // Allocate Target output lenght
     cudaMalloc(&d_ef, sizeof(int));
@@ -152,6 +158,8 @@ void constant_mallocs(
 
 template <typename T = float>
 void layer_mallocs(
+    int* d_start_ids,
+    const int* start_ids,
     int* d_adjaency_list,
     const Layer& layer,
     const size_t& ds_size,
@@ -159,6 +167,10 @@ void layer_mallocs(
     const int& ef,
     const size_t& queries_size
 ) {
+    // Allocate start_ids on device
+    cudaMalloc(&d_start_ids, queries_size * sizeof(int));
+    cudaMemcpy(d_start_ids, start_ids, queries_size * sizeof(int), cudaMemcpyHostToDevice);
+
     // Allocate fixed degree graph adjency list on device
     int* d_adjaency_list;
     cudaMalloc(&d_adjaency_list, ds_size * K * sizeof(int));
