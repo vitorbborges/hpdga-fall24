@@ -1,5 +1,5 @@
-#ifndef HNSW_SEARCH_LAYER2_CUH
-#define HNSW_SEARCH_LAYER2_CUH
+#ifndef HNSW_SEARCH_LAYER_CUH
+#define HNSW_SEARCH_LAYER_CUH
 
 #include <cuda_runtime.h>
 #include "priority_queue.cuh"
@@ -25,7 +25,7 @@ __global__ void search_layer_kernel(
     int tid = threadIdx.x;
 
     // Shared memory for query data
-    T shared_query[VEC_DIM];
+    static __shared__ T shared_query[VEC_DIM];
     if (tid < VEC_DIM) {
         shared_query[tid] = query[tid];
     }
@@ -60,15 +60,9 @@ __global__ void search_layer_kernel(
     if (tid == 0) {
         shared_visited[*start_node_id] = true;
     }
-    __syncthreads();
 
     // Main loop
-    int count = 0;
     while (q.get_size() > 0) {
-        __syncthreads();
-        if (tid == 0) {
-            count++;
-        }
         __syncthreads();
 
         // Get the current node information
@@ -86,11 +80,11 @@ __global__ void search_layer_kernel(
             n_neighbors++;
         }
 
-        // // Copy neighbor data to shared memory
-        // static __shared__ T shared_neighbor_data[K * VEC_DIM];
-        // for (size_t i = 0; i < n_neighbors; i++) {
-        //     shared_neighbor_data[i * VEC_DIM + tid] = dataset[neighbors_ids[i] * VEC_DIM + tid];
-        // }
+        // Copy neighbor data to shared memory (test if this is faster)
+        static __shared__ T shared_neighbor_data[K * VEC_DIM];
+        for (size_t i = 0; i < n_neighbors; i++) {
+            shared_neighbor_data[i * VEC_DIM + tid] = dataset[neighbors_ids[i] * VEC_DIM + tid];
+        }
         __syncthreads();
 
         // Update topk
@@ -102,11 +96,11 @@ __global__ void search_layer_kernel(
         __syncthreads();
 
         // distance computation (convert to bulk?)
-        T shared_distances[K];
+        static __shared__ T shared_distances[K];
         for (size_t i = 0; i < n_neighbors; i++) {
             T dist = euclidean_distance_gpu<T>(
                 shared_query,
-                dataset + neighbors_ids[i] * VEC_DIM,
+                shared_neighbor_data + i * VEC_DIM,
                 VEC_DIM
             );
             __syncthreads();
@@ -200,11 +194,8 @@ auto search_layer_launch(
         d_ef,
         d_result
     );
-    // catch the error
-    cudaError_t cuda_err = cudaGetLastError();
-    if (cuda_err != cudaSuccess) {
-        std::cerr << "CUDA error in search_layer_kernel: " << cudaGetErrorString(cuda_err) << std::endl;
-    }
+
+    
 
     // copy result back to host
     cudaMemcpy(result, d_result, ef * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
@@ -227,5 +218,4 @@ auto search_layer_launch(
     return search_result;
 }
 
-
-#endif // HNSW_SEARCH_LAYER2_CUH
+#endif // HNSW_SEARCH_LAYER_CUH
