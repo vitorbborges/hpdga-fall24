@@ -5,7 +5,9 @@
 #include <device_launch_parameters.h>
 #include <cstdio>
 
-#include "device_data_structures.cuh"
+#include "data_structures.cuh"
+
+using namespace ds;
 
 /*
     gpu priority queue implementation based on the paper
@@ -96,14 +98,11 @@ public:
     }
 
     __device__ void print_heap() {
-        if (threadIdx.x == 0) {
-            printf("Heap: ");
-            for (int i = 0; i < *size; i++) {
-                printf("(%f, %d) ", heap[i].dist, heap[i].id);
-            }
-            printf("top_id: [%d], size: [%d]\n", top().id, *size);
+        printf("Heap: ");
+        for (int i = 0; i < *size; i++) {
+            printf("(%f, %d) ", heap[i].dist, heap[i].id);
         }
-        __syncthreads();
+        printf("top_id: [%d], size: [%d]\n", top().id, *size);
     }
 
     __device__ int get_size() {
