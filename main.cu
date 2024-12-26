@@ -1,7 +1,6 @@
 #include <hnsw.cuh>
 #include <utils.cuh>
-
-#define REPETITIONS 1
+#include "search_layer.cuh"
 
 using namespace utils;
 using namespace hnsw;
@@ -14,7 +13,7 @@ int main() {
     int k = 100;
     int m = 16;
     int ef_construction = 100;
-    int ef = 100;
+    // int ef = 100;
 
     // SIFT10k (small) - 10,000	base / 100 query / 128 dim
     const string data_path = base_dir + "datasets/siftsmall/siftsmall_base.fvecs";
@@ -63,9 +62,13 @@ int main() {
         auto q_end = get_now();
         total_time_cpu += get_duration(q_start, q_end);
 
-        result.recall = calc_recall(result.result, ground_truth[query.id()], k);
-        results[i] = result;
+    cout << "cuda results: " << endl;
+
+    for (SearchResult sr: search_results.results) {
+        for (Neighbor n: sr.result) {
+            std::cout << "(" << n.dist << ", " << n.id << ") ";
         }
+        std::cout << std::endl;
     }
     cout << "time for " << REPETITIONS * n_query
         << " queries: " << total_time_cpu / 1000 << " [ms]" << endl;
