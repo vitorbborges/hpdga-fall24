@@ -1,3 +1,4 @@
+
 #ifndef HNSW_SEARCH_LAYER_CUH
 #define HNSW_SEARCH_LAYER_CUH
 
@@ -15,19 +16,22 @@ using namespace ds;
 
 template <typename T = float>
 __global__ void search_layer_kernel(
+    T* queries,
     int* start_node_id,
-    T* query,
     int* adjaecy_list,
     T* dataset,
     int* ef,
     d_Neighbor<T>* result
 ) {
-    int tid = threadIdx.x;
+    int tidx = threadIdx.x;
+    int bidx = blockIdx.x;
+
+    T* query = queries + bidx * VEC_DIM;
 
     // Shared memory for query data
     static __shared__ T shared_query[VEC_DIM];
-    if (tid < VEC_DIM) {
-        shared_query[tid] = query[tid];
+    if (tidx < VEC_DIM) {
+        shared_query[tidx] = query[tidx];
     }
     __syncthreads();
 
@@ -50,14 +54,14 @@ __global__ void search_layer_kernel(
     );
     __syncthreads();
 
-    if (tid == 0) {
+    if (tidx == 0) {
         q.insert({start_dist, *start_node_id});
     }
     __syncthreads();
 
     // Shared memory for visited nodes
     bool shared_visited[DATASET_SIZE];
-    if (tid == 0) {
+    if (tidx == 0) {
         shared_visited[*start_node_id] = true;
     }
 
@@ -69,7 +73,7 @@ __global__ void search_layer_kernel(
         d_Neighbor<T> now = q.pop();
         int* neighbors_ids = adjaecy_list + now.id * K;
 
-        if (tid == 0) {
+        if (tidx == 0) {
             // Mark current node as visited
             shared_visited[now.id] = true;
         }
@@ -83,14 +87,14 @@ __global__ void search_layer_kernel(
         // Copy neighbor data to shared memory (test if this is faster)
         static __shared__ T shared_neighbor_data[K * VEC_DIM];
         for (size_t i = 0; i < n_neighbors; i++) {
-            shared_neighbor_data[i * VEC_DIM + tid] = dataset[neighbors_ids[i] * VEC_DIM + tid];
+            shared_neighbor_data[i * VEC_DIM + tidx] = dataset[neighbors_ids[i] * VEC_DIM + tidx];
         }
         __syncthreads();
 
         // Update topk
         if (topk.get_size() == *ef && topk.top().dist < now.dist) {
             break;
-        } else if (tid == 0) {
+        } else if (tidx == 0) {
             topk.insert(now);
         }
         __syncthreads();
@@ -104,14 +108,14 @@ __global__ void search_layer_kernel(
                 VEC_DIM
             );
             __syncthreads();
-            if (tid == 0) {
+            if (tidx == 0) {
                 shared_distances[i] = dist;
             }
         }
         __syncthreads();
         
         // Update priority queues
-        if (tid == 0) {
+        if (tidx == 0) {
             for (size_t i = 0; i < n_neighbors; i++) {
                 if (!shared_visited[neighbors_ids[i]]) {
                     shared_visited[neighbors_ids[i]] = true;
@@ -123,19 +127,19 @@ __global__ void search_layer_kernel(
     }
 
     // Flush the heap and get results
-    if (tid == 0) {
+    if (tidx == 0) {
         while (topk.get_size() > *ef) {
             topk.pop();
         }
         for (size_t i = 0; i < *ef; i++) {
-            result[i] = topk.pop();
+            result[blockIdx.x * (*ef) + i] = topk.pop();
         }
     }
 }
 
 template <typename T = float>
-auto search_layer_launch(
-    const Data<T>& query,
+SearchResults search_layer_launch(
+    const Dataset<T>& queries,
     const int& start_node_id,
     const int& ef,
     const std::vector<Layer>& layers,
@@ -143,15 +147,17 @@ auto search_layer_launch(
     const size_t& ds_size,
     const Dataset<T>& dataset
 ) {
+    // Allocate query on device
+    T* d_queries;
+    cudaMalloc(&d_queries, queries.size() * VEC_DIM * sizeof(T));
+    for (size_t i = 0; i < queries.size(); i++) {
+        cudaMemcpy(d_queries + i * VEC_DIM, queries[i].data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+    }
+
     // Allocate start node id on device
     int* d_start_node_id;
     cudaMalloc(&d_start_node_id, sizeof(int));
     cudaMemcpy(d_start_node_id, &start_node_id, sizeof(int), cudaMemcpyHostToDevice);
-
-    // Allocate query on device
-    T* d_query;
-    cudaMalloc(&d_query, VEC_DIM * sizeof(T));
-    cudaMemcpy(d_query, query.data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
 
     // Allocate fixed degree graph adjency list on device
     int* d_adjaency_list;
@@ -181,14 +187,14 @@ auto search_layer_launch(
     cudaMemcpy(d_ef, &ef, sizeof(int), cudaMemcpyHostToDevice);
 
     // Allocate result on device
-    d_Neighbor<T> result[ef];
+    d_Neighbor<T> result[ef * queries.size()];
     d_Neighbor<T>* d_result;
-    cudaMalloc(&d_result, ef * sizeof(d_Neighbor<T>));
+    cudaMalloc(&d_result, ef * queries.size() * sizeof(d_Neighbor<T>));
 
     // Launch kernel
-    search_layer_kernel<<<1, VEC_DIM>>>(
+    search_layer_kernel<<<queries.size(), VEC_DIM>>>(
+        d_queries,
         d_start_node_id,
-        d_query,
         d_adjaency_list,
         d_dataset,
         d_ef,
@@ -196,24 +202,28 @@ auto search_layer_launch(
     );
 
     // copy result back to host
-    cudaMemcpy(result, d_result, ef * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
+    cudaMemcpy(result, d_result, ef * queries.size() * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
 
     // Free memory
     cudaFree(d_start_node_id);
-    cudaFree(d_query);
+    cudaFree(d_queries);
     cudaFree(d_adjaency_list);
     cudaFree(d_dataset);
     cudaFree(d_ef);
     cudaFree(d_result);
 
     // Prepare output
-    SearchResult search_result = SearchResult();
-    for (size_t i = 0; i < ef; i++) {
-        search_result.result.emplace_back(result[i].dist, result[i].id);
+    SearchResults search_results(queries.size());
+    for (size_t i = 0; i < queries.size(); i++) {
+        SearchResult search_result = SearchResult();
+        for (size_t j = 0; j < ef; j++) {
+            search_result.result.emplace_back(result[i * ef + j].dist, result[i * ef + j].id);
+        }
+        std::sort(search_result.result.begin(), search_result.result.end(), CompLess());
+        search_results.push_back(search_result);
     }
-    std::sort(search_result.result.begin(), search_result.result.end(), CompLess());
 
-    return search_result;
+    return search_results;
 }
 
 #endif // HNSW_SEARCH_LAYER_CUH
