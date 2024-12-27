@@ -45,11 +45,14 @@ int main() {
     const auto build_time = get_duration(start, end);
     cout << "index_construction: " << build_time / 1000 << " [ms]" << endl;
 
-    int test_k = 1;
+    int test_k = 5;
     int test_layer = 0;
+    Dataset<float> test_queries;
+    // test_queries.push_back(queries[85]);
+    int test_n_query = test_queries.size();
 
     auto search_results = search_layer_launch(
-        queries,
+        test_queries,
         index.enter_node_id,
         test_k,
         index.layers,
@@ -60,49 +63,51 @@ int main() {
 
     cout << "cuda results: " << endl;
 
-    for (SearchResult sr: search_results.results) {
-        for (Neighbor n: sr.result) {
-            std::cout << "(" << n.dist << ", " << n.id << ") ";
-        }
-        std::cout << std::endl;
-    }
+    search_results.print_results();
 
     cout << "cpu results: " << endl;
 
-    for (size_t i = 0; i < n_query; i++) {
+    SearchResults cpu_results(test_n_query);
+    for (size_t i = 0; i < test_n_query; i++) {
         auto cpu_result = index.search_layer(
-            queries[i],
+            test_queries[i],
             index.enter_node_id,
             test_k,
             test_layer
         );
 
-        for (size_t i = 0; i < test_k; i++) {
-            cout << "(" << cpu_result.result[i].dist << ", " << cpu_result.result[i].id << ") ";
+        SearchResult sr;
+        for (size_t j = 0; j < test_k; j++) {
+            Neighbor n;
+            n.id = cpu_result.result[j].id;
+            n.dist = cpu_result.result[j].dist;
+            sr.result.push_back(n);
         }
-        cout << endl;
+        cpu_results[i] = sr;
     }
 
-    // // check if results are the same
-    // int query_id = 0;
-    // for (SearchResult sr: search_results.results) {
-    //     auto cpu_result = index.search_layer(
-    //         queries[query_id],
-    //         index.enter_node_id,
-    //         test_k,
-    //         test_layer
-    //     );
+    cpu_results.print_results();
 
-    //     for (size_t i = 0; i < test_k; i++) {
-    //         for (Neighbor n: sr.result) {
-    //             if (n.dist != cpu_result.result[i].dist || n.id != cpu_result.result[i].id) {
-    //                 cout << "Results are not the same on query " << query_id << endl;
-    //                 return 1;
-    //             }
-    //         }
-    //     }
-    //     query_id++;
-    // }
+    // Check if results are the same using precomputed CPU results
+    bool mismatch_found = false;
+    for (size_t i = 0; i < test_n_query; i++) {
+        for (size_t j = 0; j < test_k; j++) {
+            if (search_results[i].result[j].id != cpu_results[i].result[j].id
+                || search_results[i].result[j].dist != cpu_results[i].result[j].dist) {
+                cout << "Mismatch found at query_id: " << i << " resuslt_id: " << j << endl;
+                cout << "GPU: " << search_results[i].result[j].id << " " << search_results[i].result[j].dist << endl;
+                cout << "CPU: " << cpu_results[i].result[j].id << " " << cpu_results[i].result[j].dist << endl;
+                cout << "--------------------------------" << endl;
+                mismatch_found = true;
+            }
+        }
+    }
+
+    if (!mismatch_found) {
+        cout << "Results are the same" << endl;
+    }
+    return 0;
+
 
     
 }

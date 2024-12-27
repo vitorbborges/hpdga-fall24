@@ -58,6 +58,7 @@ namespace hnsw {
                 const auto nearest_candidate = candidates.top();
                 const auto& nearest_candidate_node = layers[l_c][nearest_candidate.id];
                 candidates.pop();
+                cout << "nearest candidate id: " << nearest_candidate.id << endl;
 
                 if (nearest_candidate.dist > top_candidates.top().dist) break;
 
@@ -67,6 +68,7 @@ namespace hnsw {
 
                     const auto& neighbor_node = layers[l_c][neighbor.id];
                     const auto dist_from_neighbor = calc_dist(query, neighbor_node.data);
+                    cout << "neighbor id: " << neighbor.id << " dist: " << dist_from_neighbor << endl;
 
                     if (dist_from_neighbor < top_candidates.top().dist ||
                         top_candidates.size() < ef) {

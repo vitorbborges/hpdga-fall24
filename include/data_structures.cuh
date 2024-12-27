@@ -173,6 +173,18 @@ namespace ds {
                 query_id++;
             }
         }
+
+        void print_results() const {
+            int query_id = 0;
+            for (const auto& result : results) {
+                std::cout << "Query ID " << query_id << ": ";
+                for (const auto& neighbor : result.result) {
+                    std::cout << "(" << neighbor.dist << ", " << neighbor.id << ") ";
+                }
+                std::cout << "\n";
+                ++query_id;
+            }
+        }
     };
 
     template <typename T = float>
