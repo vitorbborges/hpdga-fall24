@@ -164,31 +164,27 @@ SearchResults search_layer_launch(
 ) {
     const int num_queries = queries.size();
 
-    // Allocate pinned memory for queries and results
-    T* h_queries_pinned;
-    int* h_start_ids_pinned;
-    d_Neighbor<T>* h_result_pinned;
+    // Allocate unified memory for queries, start IDs, and results
+    T* queries_unified;
+    int* start_ids_unified;
+    d_Neighbor<T>* results_unified;
 
-    cudaHostAlloc(&h_queries_pinned, num_queries * VEC_DIM * sizeof(T), cudaHostAllocDefault);
-    cudaHostAlloc(&h_start_ids_pinned, num_queries * sizeof(int), cudaHostAllocDefault);
-    cudaHostAlloc(&h_result_pinned, num_queries * ef * sizeof(d_Neighbor<T>), cudaHostAllocDefault);
+    cudaMallocManaged(&queries_unified, num_queries * VEC_DIM * sizeof(T));
+    cudaMallocManaged(&start_ids_unified, num_queries * sizeof(int));
+    cudaMallocManaged(&results_unified, num_queries * ef * sizeof(d_Neighbor<T>));
 
-    // Copy query data into pinned memory
+    // Copy query data into unified memory
     for (size_t i = 0; i < num_queries; i++) {
-        std::copy(queries[i].data(), queries[i].data() + VEC_DIM, h_queries_pinned + i * VEC_DIM);
-        h_start_ids_pinned[i] = start_node_id;
+        std::copy(queries[i].data(), queries[i].data() + VEC_DIM, queries_unified + i * VEC_DIM);
+        start_ids_unified[i] = start_node_id;
     }
 
-    // Allocate device memory
-    T* d_queries;
-    int* d_start_ids;
+    // Allocate device memory for adjacency list, dataset, and ef parameter
     int* d_adjacency_list;
     T* d_dataset;
     int* d_ef;
     d_Neighbor<T>* d_result;
 
-    cudaMalloc(&d_queries, num_queries * VEC_DIM * sizeof(T));
-    cudaMalloc(&d_start_ids, num_queries * sizeof(int));
     cudaMalloc(&d_adjacency_list, ds_size * K * sizeof(int));
     cudaMalloc(&d_dataset, ds_size * VEC_DIM * sizeof(T));
     cudaMalloc(&d_ef, sizeof(int));
@@ -204,7 +200,6 @@ SearchResults search_layer_launch(
     }
     cudaMemcpy(d_adjacency_list, adjacency_host.data(), ds_size * K * sizeof(int), cudaMemcpyHostToDevice);
 
-
     // Copy dataset to device
     std::vector<T> dataset_host(ds_size * VEC_DIM);
     for (size_t i = 0; i < ds_size; i++) {
@@ -212,44 +207,40 @@ SearchResults search_layer_launch(
     }
     cudaMemcpy(d_dataset, dataset_host.data(), ds_size * VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
 
-
     // Copy ef parameter to device
     cudaMemcpy(d_ef, &ef, sizeof(int), cudaMemcpyHostToDevice);
 
-    // Copy queries and start IDs to device
-    cudaMemcpy(d_queries, h_queries_pinned, num_queries * VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_start_ids, h_start_ids_pinned, num_queries * sizeof(int), cudaMemcpyHostToDevice);
-
-    // Launch kernel
+    // Launch kernel using unified memory for queries and results
     search_layer_kernel<<<num_queries, VEC_DIM>>>(
-        d_queries,
-        d_start_ids,
+        queries_unified,
+        start_ids_unified,
         d_adjacency_list,
         d_dataset,
         d_ef,
         d_result
     );
 
-    // Copy results back to pinned memory
-    cudaMemcpy(h_result_pinned, d_result, num_queries * ef * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
+    // Synchronize to ensure all GPU tasks are complete
+    cudaDeviceSynchronize();
+
+    // Copy results back to unified memory
+    cudaMemcpy(results_unified, d_result, num_queries * ef * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
 
     // Prepare output
     SearchResults search_results(num_queries);
     for (size_t i = 0; i < num_queries; i++) {
         SearchResult search_result;
         for (size_t j = 0; j < ef; j++) {
-            search_result.result.emplace_back(h_result_pinned[i * ef + j].dist, h_result_pinned[i * ef + j].id);
+            search_result.result.emplace_back(results_unified[i * ef + j].dist, results_unified[i * ef + j].id);
         }
         std::sort(search_result.result.begin(), search_result.result.end(), CompLess());
         search_results[i] = search_result;
     }
 
-    // Free pinned and device memory
-    cudaFreeHost(h_queries_pinned);
-    cudaFreeHost(h_start_ids_pinned);
-    cudaFreeHost(h_result_pinned);
-    cudaFree(d_queries);
-    cudaFree(d_start_ids);
+    // Free unified and device memory
+    cudaFree(queries_unified);
+    cudaFree(start_ids_unified);
+    cudaFree(results_unified);
     cudaFree(d_adjacency_list);
     cudaFree(d_dataset);
     cudaFree(d_ef);
@@ -257,6 +248,5 @@ SearchResults search_layer_launch(
 
     return search_results;
 }
-
 
 #endif // HNSW_SEARCH_LAYER_CUH
