@@ -78,7 +78,7 @@ __global__ void search_layer_kernel(
         if (tidx == 0) {
             // Mark current node as visited
             shared_visited[now.id] = true;
-            printf("Visiting node: %d\n", now.id);
+            // printf("Visiting node: %d\n", now.id);
         }
 
         int n_neighbors = 0;
@@ -132,13 +132,13 @@ __global__ void search_layer_kernel(
 
                 }
             }
-            printf("Queue size: %d\n", q.get_size());
-            q.print_heap();
-            printf("\n");
-            printf("Topk size: %d\n", topk.get_size());
-            topk.print_heap();
-            printf("=====================================\n");
-            printf("\n");
+            // printf("Queue size: %d\n", q.get_size());
+            // q.print_heap();
+            // printf("\n");
+            // printf("Topk size: %d\n", topk.get_size());
+            // topk.print_heap();
+            // printf("=====================================\n");
+            // printf("\n");
         }
         __syncthreads();
     }
