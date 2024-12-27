@@ -162,85 +162,98 @@ SearchResults search_layer_launch(
     const size_t& ds_size,
     const Dataset<T>& dataset
 ) {
-    // Allocate query on device
-    T* d_queries;
-    cudaMalloc(&d_queries, queries.size() * VEC_DIM * sizeof(T));
-    for (size_t i = 0; i < queries.size(); i++) {
-        cudaMemcpy(d_queries + i * VEC_DIM, queries[i].data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+    const int num_queries = queries.size();
+
+    // Allocate pinned memory for queries and results
+    T* h_queries_pinned;
+    int* h_start_ids_pinned;
+    d_Neighbor<T>* h_result_pinned;
+
+    cudaHostAlloc(&h_queries_pinned, num_queries * VEC_DIM * sizeof(T), cudaHostAllocDefault);
+    cudaHostAlloc(&h_start_ids_pinned, num_queries * sizeof(int), cudaHostAllocDefault);
+    cudaHostAlloc(&h_result_pinned, num_queries * ef * sizeof(d_Neighbor<T>), cudaHostAllocDefault);
+
+    // Copy query data into pinned memory
+    for (size_t i = 0; i < num_queries; i++) {
+        std::copy(queries[i].data(), queries[i].data() + VEC_DIM, h_queries_pinned + i * VEC_DIM);
+        h_start_ids_pinned[i] = start_node_id;
     }
 
-    // Allocate initial search id of each query on device
+    // Allocate device memory
+    T* d_queries;
     int* d_start_ids;
-    cudaMalloc(&d_start_ids, queries.size() * sizeof(int));
-    int support_array[queries.size()]; // create support array to ease memory copy
-    std::fill(support_array, support_array + queries.size(), start_node_id);
-    cudaMemcpy(d_start_ids, support_array, queries.size() * sizeof(int), cudaMemcpyHostToDevice);
-
-    // Allocate fixed degree graph adjency list on device
-    int* d_adjaency_list;
-    cudaMalloc(&d_adjaency_list, ds_size * K * sizeof(int));
-    for (Node node: layers[l_c]) {
-        int neighbors_ids[K];
-        std::fill(neighbors_ids, neighbors_ids + K, -1);
-        int node_neighbors_size = node.neighbors.size();
-        if (node_neighbors_size > 0) {
-            for (size_t i = 0; i < node_neighbors_size; i++) {
-                neighbors_ids[i] = node.neighbors[i].id;
-            }
-            cudaMemcpy(d_adjaency_list + node.data.id() * K, neighbors_ids, K * sizeof(int), cudaMemcpyHostToDevice);
-        }
-    }    
-
-    // Allocate dataset on device
+    int* d_adjacency_list;
     T* d_dataset;
+    int* d_ef;
+    d_Neighbor<T>* d_result;
+
+    cudaMalloc(&d_queries, num_queries * VEC_DIM * sizeof(T));
+    cudaMalloc(&d_start_ids, num_queries * sizeof(int));
+    cudaMalloc(&d_adjacency_list, ds_size * K * sizeof(int));
     cudaMalloc(&d_dataset, ds_size * VEC_DIM * sizeof(T));
+    cudaMalloc(&d_ef, sizeof(int));
+    cudaMalloc(&d_result, num_queries * ef * sizeof(d_Neighbor<T>));
+
+    // Copy adjacency list to device
+    std::vector<int> adjacency_host(ds_size * K, -1);
+    for (Node node : layers[l_c]) {
+        int offset = node.data.id() * K;
+        for (size_t i = 0; i < node.neighbors.size(); i++) {
+            adjacency_host[offset + i] = node.neighbors[i].id;
+        }
+    }
+    cudaMemcpy(d_adjacency_list, adjacency_host.data(), ds_size * K * sizeof(int), cudaMemcpyHostToDevice);
+
+
+    // Copy dataset to device
     for (size_t i = 0; i < ds_size; i++) {
         cudaMemcpy(d_dataset + i * VEC_DIM, dataset[i].data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
     }
 
-    // Allocate Target output lenght
-    int* d_ef;
-    cudaMalloc(&d_ef, sizeof(int));
+    // Copy ef parameter to device
     cudaMemcpy(d_ef, &ef, sizeof(int), cudaMemcpyHostToDevice);
 
-    // Allocate result on device
-    d_Neighbor<T> result[ef * queries.size()];
-    d_Neighbor<T>* d_result;
-    cudaMalloc(&d_result, ef * queries.size() * sizeof(d_Neighbor<T>));
+    // Copy queries and start IDs to device
+    cudaMemcpy(d_queries, h_queries_pinned, num_queries * VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_start_ids, h_start_ids_pinned, num_queries * sizeof(int), cudaMemcpyHostToDevice);
 
     // Launch kernel
-    search_layer_kernel<<<queries.size(), VEC_DIM>>>(
+    search_layer_kernel<<<num_queries, VEC_DIM>>>(
         d_queries,
         d_start_ids,
-        d_adjaency_list,
+        d_adjacency_list,
         d_dataset,
         d_ef,
         d_result
     );
 
-    // copy result back to host
-    cudaMemcpy(result, d_result, ef * queries.size() * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
-
-    // Free memory
-    cudaFree(d_start_ids);
-    cudaFree(d_queries);
-    cudaFree(d_adjaency_list);
-    cudaFree(d_dataset);
-    cudaFree(d_ef);
-    cudaFree(d_result);
+    // Copy results back to pinned memory
+    cudaMemcpy(h_result_pinned, d_result, num_queries * ef * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
 
     // Prepare output
-    SearchResults search_results(queries.size());
-    for (size_t i = 0; i < queries.size(); i++) {
-        SearchResult search_result = SearchResult();
+    SearchResults search_results(num_queries);
+    for (size_t i = 0; i < num_queries; i++) {
+        SearchResult search_result;
         for (size_t j = 0; j < ef; j++) {
-            search_result.result.emplace_back(result[i * ef + j].dist, result[i * ef + j].id);
+            search_result.result.emplace_back(h_result_pinned[i * ef + j].dist, h_result_pinned[i * ef + j].id);
         }
         std::sort(search_result.result.begin(), search_result.result.end(), CompLess());
         search_results[i] = search_result;
     }
 
+    // Free pinned and device memory
+    cudaFreeHost(h_queries_pinned);
+    cudaFreeHost(h_start_ids_pinned);
+    cudaFreeHost(h_result_pinned);
+    cudaFree(d_queries);
+    cudaFree(d_start_ids);
+    cudaFree(d_adjacency_list);
+    cudaFree(d_dataset);
+    cudaFree(d_ef);
+    cudaFree(d_result);
+
     return search_results;
 }
+
 
 #endif // HNSW_SEARCH_LAYER_CUH
