@@ -13,23 +13,12 @@ int main() {
     int k = 100;
     int m = 16;
     int ef_construction = 100;
-    // int ef = 100;
 
-    // SIFT10k (small) - 10,000	base / 100 query / 128 dim
+    // SIFT10k (small) - 10,000 base / 100 query / 128 dim
     const string data_path = base_dir + "datasets/siftsmall/siftsmall_base.fvecs";
-    const string query_path =
-        base_dir + "datasets/siftsmall/siftsmall_query.fvecs";
-    const string ground_truth_path =
-        base_dir + "datasets/siftsmall/siftsmall_groundtruth.ivecs";
+    const string query_path = base_dir + "datasets/siftsmall/siftsmall_query.fvecs";
+    const string ground_truth_path = base_dir + "datasets/siftsmall/siftsmall_groundtruth.ivecs";
     const int n = 10000, n_query = 100;
-
-    // // SIFT1M (normal) - 1,000,000	base / 10,000 query / 128 dim
-    // const string data_path = base_dir + "datasets/sift/sift_base.fvecs";
-    // const string query_path = base_dir + "datasets/sift/sift_query.fvecs";
-    // const string ground_truth_path = base_dir +
-    // "datasets/sift/sift_groundtruth.ivecs"; const int n = 1000000, n_query =
-    // 10000;
-
 
     cout << "Start loading data" << endl;
     const auto dataset = fvecs_read(data_path, n);
@@ -51,6 +40,9 @@ int main() {
     test_queries.push_back(queries[66]);
     int test_n_query = test_queries.size();
 
+    // Measure GPU time
+    cout << "Start GPU search" << endl;
+    const auto gpu_start = get_now();
     auto search_results = search_layer_launch(
         test_queries,
         index.enter_node_id,
@@ -60,13 +52,16 @@ int main() {
         dataset.size(),
         dataset
     );
+    const auto gpu_end = get_now();
+    const auto gpu_duration = get_duration(gpu_start, gpu_end);
+    cout << "GPU search time: " << gpu_duration / 1000 << " [ms]" << endl;
 
     cout << "cuda results: " << endl;
-
     search_results.print_results();
 
-    cout << "cpu results: " << endl;
-
+    // Measure CPU time
+    cout << "Start CPU search" << endl;
+    const auto cpu_start = get_now();
     SearchResults cpu_results(test_n_query);
     for (size_t i = 0; i < test_n_query; i++) {
         auto cpu_result = index.search_layer(
@@ -85,7 +80,11 @@ int main() {
         }
         cpu_results[i] = sr;
     }
+    const auto cpu_end = get_now();
+    const auto cpu_duration = get_duration(cpu_start, cpu_end);
+    cout << "CPU search time: " << cpu_duration / 1000 << " [ms]" << endl;
 
+    cout << "cpu results: " << endl;
     cpu_results.print_results();
 
     // Check if results are the same using precomputed CPU results
@@ -107,7 +106,4 @@ int main() {
         cout << "Results are the same" << endl;
     }
     return 0;
-
-
-    
 }

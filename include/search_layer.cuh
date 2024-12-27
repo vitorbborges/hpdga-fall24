@@ -1,4 +1,3 @@
-
 #ifndef HNSW_SEARCH_LAYER_CUH
 #define HNSW_SEARCH_LAYER_CUH
 
@@ -34,7 +33,6 @@ __global__ void search_layer_kernel(
     if (tidx < VEC_DIM) {
         shared_query[tidx] = query[tidx];
     }
-    __syncthreads();
 
     // Priority queues initialization
     __shared__ d_Neighbor<T> candidates_array[MAX_HEAP_SIZE];
@@ -53,7 +51,7 @@ __global__ void search_layer_kernel(
         dataset + start_node_id * VEC_DIM,
         VEC_DIM
     );
-    __syncthreads();
+    // __syncthreads();
 
     if (tidx == 0) {
         q.insert({start_dist, start_node_id});
