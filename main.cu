@@ -45,10 +45,10 @@ int main() {
     const auto build_time = get_duration(start, end);
     cout << "index_construction: " << build_time / 1000 << " [ms]" << endl;
 
-    int test_k = 5;
-    int test_layer = 2;
-    Dataset<float> test_queries = queries;
-    // test_queries.push_back(queries[66]);
+    int test_k = 100;
+    int test_layer = 0;
+    Dataset<float> test_queries;
+    test_queries.push_back(queries[66]);
     int test_n_query = test_queries.size();
 
     auto search_results = search_layer_launch(
