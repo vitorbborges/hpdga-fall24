@@ -1,4 +1,3 @@
-
 #ifndef HNSW_SEARCH_LAYER_CUH
 #define HNSW_SEARCH_LAYER_CUH
 
@@ -34,7 +33,6 @@ __global__ void search_layer_kernel(
     if (tidx < VEC_DIM) {
         shared_query[tidx] = query[tidx];
     }
-    __syncthreads();
 
     // Priority queues initialization
     __shared__ d_Neighbor<T> candidates_array[MAX_HEAP_SIZE];
@@ -53,10 +51,11 @@ __global__ void search_layer_kernel(
         dataset + start_node_id * VEC_DIM,
         VEC_DIM
     );
-    __syncthreads();
+    // __syncthreads();
 
     if (tidx == 0) {
         q.insert({start_dist, start_node_id});
+        topk.insert({start_dist, start_node_id});
     }
     __syncthreads();
 
@@ -77,6 +76,7 @@ __global__ void search_layer_kernel(
         if (tidx == 0) {
             // Mark current node as visited
             shared_visited[now.id] = true;
+            // printf("Visiting node: %d\n", now.id);
         }
 
         int n_neighbors = 0;
@@ -92,11 +92,9 @@ __global__ void search_layer_kernel(
         }
         __syncthreads();
 
-        // Update topk
-        if (topk.get_size() == *ef && topk.top().dist < now.dist) {
+        // Check the exit condidtion
+        if (topk.top().dist < now.dist) {
             break;
-        } else if (tidx == 0) {
-            topk.insert(now);
         }
         __syncthreads();
 
@@ -118,11 +116,27 @@ __global__ void search_layer_kernel(
         // Update priority queues
         if (tidx == 0) {
             for (size_t i = 0; i < n_neighbors; i++) {
-                if (!shared_visited[neighbors_ids[i]]) {
-                    shared_visited[neighbors_ids[i]] = true;
+                if (shared_visited[neighbors_ids[i]]) continue;
+                shared_visited[neighbors_ids[i]] = true;
+
+                if (shared_distances[i < topk.top().dist] ||
+                    topk.get_size() < *ef) {
                     q.insert({shared_distances[i], neighbors_ids[i]});
+                    topk.insert({shared_distances[i], neighbors_ids[i]});
+
+                    if (topk.get_size() > *ef) {
+                        topk.pop();
+                    }
+
                 }
             }
+            // printf("Queue size: %d\n", q.get_size());
+            // q.print_heap();
+            // printf("\n");
+            // printf("Topk size: %d\n", topk.get_size());
+            // topk.print_heap();
+            // printf("=====================================\n");
+            // printf("\n");
         }
         __syncthreads();
     }
@@ -223,7 +237,7 @@ SearchResults search_layer_launch(
             search_result.result.emplace_back(result[i * ef + j].dist, result[i * ef + j].id);
         }
         std::sort(search_result.result.begin(), search_result.result.end(), CompLess());
-        search_results.push_back(search_result);
+        search_results[i] = search_result;
     }
 
     return search_results;
