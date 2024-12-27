@@ -48,35 +48,30 @@ int main() {
     const auto build_time = get_duration(start, end);
     cout << "index_construction: " << build_time / 1000 << " [ms]" << endl;
 
+    // Test parameters
+    Dataset<float> test_queries = queries;
+    int test_n_query = test_queries.size();
+    int test_ef = 30;
+
     // CPU Calculation
     long total_time_cpu = 0;
-    SearchResults results(n_query);
-    // Simulating REPETITIONS * n_query search procedure (during dev you can
-    // reduce REPETITIONS = 1 for fast testing)
+    SearchResults results_cpu(n_query);
     cout << "Start searching CPU" << endl;
     for (int rep = 0; rep < REPETITIONS; rep++) {
-        for (int i = 0; i < n_query; i++) {
+        for (int i = 0; i < test_n_query; i++) {
         const auto& query = queries[i];
 
         auto q_start = get_now();
-        auto result = index.knn_search(query, k, ef);
+        auto result = index.knn_search(query, test_ef, test_ef);
         auto q_end = get_now();
         total_time_cpu += get_duration(q_start, q_end);
 
         result.recall = calc_recall(result.result, ground_truth[query.id()], k);
-        results[i] = result;
+        results_cpu[i] = result;
         }
     }
-    cout << "time for " << REPETITIONS * n_query
-        << " queries: " << total_time_cpu / 1000 << " [ms]" << endl;
 
-    for (SearchResult& result : results.results) {
-        for (Neighbor& neighbor : result.result) {
-            cout << "(" << neighbor.id << ", " << neighbor.dist << ")";
-        }
-        cout << endl;
-
-    }
+    results_cpu.print_results();
         
     // GPU Calculation
     long total_time_gpu = 0;
@@ -84,23 +79,62 @@ int main() {
 
     auto q_start = get_now();
     SearchResults results_gpu = knn_search(
-        queries,
+        test_queries,
         index.enter_node_id,
-        1,
+        test_ef,
         index.layers,
         n,
         dataset
     );
     auto q_end = get_now();
     total_time_gpu += get_duration(q_start, q_end);
+
+    // Calculate recall
+    for (int i = 0; i < test_n_query; i++) {
+        results_gpu[i].recall = calc_recall(results_gpu[i].result, ground_truth[i], k);
+    }
+
+    results_gpu.print_results();
+
+    // Check if results are the same using precomputed CPU results
+    bool mismatch_found = false;
+    for (size_t i = 0; i < test_n_query; i++) {
+        for (size_t j = 0; j < test_ef; j++) {
+            if (results_gpu[i].result[j].id != results_cpu[i].result[j].id
+                || results_gpu[i].result[j].dist != results_cpu[i].result[j].dist) {
+                cout << "Mismatch found at query_id: " << i << " resuslt_id: " << j << endl;
+                cout << "GPU: " << results_gpu[i].result[j].id << " " << results_gpu[i].result[j].dist << endl;
+                cout << "CPU: " << results_cpu[i].result[j].id << " " << results_cpu[i].result[j].dist << endl;
+                cout << "--------------------------------" << endl;
+                mismatch_found = true;
+            }
+        }
+    }
+
+    if (!mismatch_found) {
+        cout << "Results are the same" << endl;
+    }
+
     cout << "time for " << REPETITIONS * n_query
-        << " queries: " << total_time_gpu / 1000 << " [ms]" << endl;
+        << " queries on CPU: " << total_time_cpu / 1000 << " [ms]" << endl;
 
-    // for (SearchResult& result : results_gpu.results) {
-    //     for (Neighbor& neighbor : result.result) {
-    //         cout << "(" << neighbor.id << ", " << neighbor.dist << ")" << endl;
-    //     }
+    // print average recall
+    float avg_recall_cpu = 0;
+    for (int i = 0; i < test_n_query; i++) {
+        avg_recall_cpu += results_cpu[i].recall;
+    }
+    avg_recall_cpu /= test_n_query;
+    cout << "Average recall: " << avg_recall_cpu << endl;
 
-    // }
+    cout << "time for " << REPETITIONS * n_query
+        << " queries on GPU: " << total_time_gpu / 1000 << " [ms]" << endl;
+
+    // print average recall
+    float avg_recall_gpu = 0;
+    for (int i = 0; i < test_n_query; i++) {
+        avg_recall_gpu += results_gpu[i].recall;
+    }
+    avg_recall_gpu /= test_n_query;
+    cout << "Average recall: " << avg_recall_gpu << endl;
     
 }
