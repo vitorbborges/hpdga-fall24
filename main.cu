@@ -69,6 +69,14 @@ int main() {
     }
     cout << "time for " << REPETITIONS * n_query
         << " queries: " << total_time_cpu / 1000 << " [ms]" << endl;
+
+    for (SearchResult& result : results.results) {
+        for (Neighbor& neighbor : result.result) {
+            cout << "(" << neighbor.id << ", " << neighbor.dist << ")";
+        }
+        cout << endl;
+
+    }
         
     // GPU Calculation
     long total_time_gpu = 0;
@@ -78,7 +86,7 @@ int main() {
     SearchResults results_gpu = knn_search(
         queries,
         index.enter_node_id,
-        ef,
+        1,
         index.layers,
         n,
         dataset
@@ -87,5 +95,12 @@ int main() {
     total_time_gpu += get_duration(q_start, q_end);
     cout << "time for " << REPETITIONS * n_query
         << " queries: " << total_time_gpu / 1000 << " [ms]" << endl;
+
+    // for (SearchResult& result : results_gpu.results) {
+    //     for (Neighbor& neighbor : result.result) {
+    //         cout << "(" << neighbor.id << ", " << neighbor.dist << ")" << endl;
+    //     }
+
+    // }
     
 }

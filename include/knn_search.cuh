@@ -114,54 +114,64 @@ SearchResults knn_search(
     const size_t& ds_size,
     const Dataset<float>& dataset
 ) {
-    // Log initial GPU memory
-    log_gpu_memory();
+    // Allocate query on device
+    T* d_queries;
+    cudaMalloc(&d_queries, queries.size() * VEC_DIM * sizeof(T));
+    for (size_t i = 0; i < queries.size(); i++) {
+        cudaMemcpy(d_queries + i * VEC_DIM, queries[i].data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+    }
 
-    // Create device pointers
-    T* d_queries = nullptr;
-    int* d_ef = nullptr;
-    T* d_dataset = nullptr;
+    // Allocate initial search id of each query on device
+    int* d_start_ids;
+    cudaMalloc(&d_start_ids, queries.size() * sizeof(int));
 
-    // Constant allocations
-    constant_mallocs(
-        d_queries,
-        queries,
-        d_ef,
-        ef,
-        d_dataset,
-        dataset,
-        ds_size
-    );
-
-    // Allocate initial entry node id for each query
-    int start_ids[queries.size()];
+    int start_ids[queries.size()]; // create support array to ease memory copy
     std::fill(start_ids, start_ids + queries.size(), start_node_id);
+    cudaMemcpy(d_start_ids, start_ids, queries.size() * sizeof(int), cudaMemcpyHostToDevice);
 
-    // Layer-specific device pointers
-    int* d_start_ids = nullptr;
-    int* d_adjaency_list = nullptr;
-    int* d_search_ef = nullptr;
-    d_Neighbor<T>* d_layer_results = nullptr;
+    // Allocate fixed degree graph adjency list on device
+    int* d_adjaency_list;
+    cudaMalloc(&d_adjaency_list, ds_size * K * sizeof(int));    
 
-    // Layer specific variables allocations
-    CHECK_CUDA_CALL(cudaMalloc(&d_start_ids, queries.size() * sizeof(int)));
-    CHECK_CUDA_CALL(cudaMalloc(&d_adjaency_list, ds_size * K * sizeof(int)));
-    CHECK_CUDA_CALL(cudaMalloc(&d_search_ef, sizeof(int)));
-    CHECK_CUDA_CALL(cudaMalloc(&d_layer_results, queries.size() * sizeof(d_Neighbor<T>)));
+    // Allocate dataset on device
+    T* d_dataset;
+    cudaMalloc(&d_dataset, ds_size * VEC_DIM * sizeof(T));
+    for (size_t i = 0; i < ds_size; i++) {
+        cudaMemcpy(d_dataset + i * VEC_DIM, dataset[i].data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+    }
 
-    for (int l_c = layers.size() - 1; l_c >= 0; l_c--) {
+    // Allocate Target output lenght
+    int* d_ef;
+    cudaMalloc(&d_ef, sizeof(int));
+    cudaMemcpy(d_ef, &ef, sizeof(int), cudaMemcpyHostToDevice);
 
+    // Allocate search layer target lenght  
+    int* d_layer_ef;
+    cudaMalloc(&d_layer_ef, sizeof(int));
+    int one = 1;
+    cudaMemcpy(d_layer_ef, &one, sizeof(int), cudaMemcpyHostToDevice);
+
+
+    // Allocate layer search result on device
+    d_Neighbor<T> layer_result[queries.size()];
+    d_Neighbor<T>* d_layer_result;
+    cudaMalloc(&d_layer_result, queries.size() * sizeof(d_Neighbor<T>));
+    
+    for (int l_c = layers.size() - 1; l_c > 0; l_c--) {
+        
         // copy layer-specific data to device memory
-        copy_layer_values(
-            d_start_ids,
-            start_ids,
-            d_adjaency_list,
-            layers[l_c],
-            1,
-            d_search_ef,
-            ds_size,
-            queries.size()
-        );
+        cudaMemcpy(d_start_ids, start_ids, queries.size() * sizeof(int), cudaMemcpyHostToDevice);
+        for (Node node: layers[l_c]) {
+            int neighbors_ids[K];
+            std::fill(neighbors_ids, neighbors_ids + K, -1);
+            int node_neighbors_size = node.neighbors.size();
+            if (node_neighbors_size > 0) {
+                for (size_t i = 0; i < node_neighbors_size; i++) {
+                    neighbors_ids[i] = node.neighbors[i].id;
+                }
+                cudaMemcpy(d_adjaency_list + node.data.id() * K, neighbors_ids, K * sizeof(int), cudaMemcpyHostToDevice);
+            }
+        }
         
         // Launch kernel
         search_layer_kernel<<<queries.size(), VEC_DIM>>>(
@@ -169,65 +179,79 @@ SearchResults knn_search(
             d_start_ids,
             d_adjaency_list,
             d_dataset,
-            d_search_ef,
-            d_layer_results
+            d_layer_ef,
+            d_layer_result
         );
 
         // Fetch layer results
-        d_Neighbor<T> results_array[queries.size()];
-        CHECK_CUDA_CALL(cudaMemcpy(results_array, d_layer_results, queries.size() * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost));
+        cudaMemcpy(layer_result, d_layer_result, queries.size() * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
 
         // Update start_ids for next layer
         for (size_t i = 0; i < queries.size(); i++) {
-            start_ids[i] = results_array[i].id;
+            start_ids[i] = layer_result[i].id;
         }
     }
 
-    // // Base layer search
-    // std::cout << "Start searching base layer" << std::endl;
+    // base layer search
+    cudaMemcpy(d_start_ids, start_ids, queries.size() * sizeof(int), cudaMemcpyHostToDevice);
+    for (Node node: layers[0]) {
+        int neighbors_ids[K];
+        std::fill(neighbors_ids, neighbors_ids + K, -1);
+        int node_neighbors_size = node.neighbors.size();
+        if (node_neighbors_size > 0) {
+            for (size_t i = 0; i < node_neighbors_size; i++) {
+                neighbors_ids[i] = node.neighbors[i].id;
+            }
+            cudaMemcpy(d_adjaency_list + node.data.id() * K, neighbors_ids, K * sizeof(int), cudaMemcpyHostToDevice);
+        }
+    }
 
-    // copy_layer_values(
-    //     d_start_ids,
-    //     start_ids,
-    //     d_adjaency_list,
-    //     layers[0],
-    //     1,
-    //     d_search_ef,
-    //     ds_size,
-    //     queries.size()
-    // );
+    // Allocate hnsw search result on device
+    d_Neighbor<T> hnsw_result[queries.size()];
+    d_Neighbor<T>* d_hnsw_result;
+    cudaMalloc(&d_hnsw_result, queries.size() * sizeof(d_Neighbor<T>));
 
-    // // Allocate result on device
-    // d_Neighbor<T>* d_search_results = nullptr;
-    // CHECK_CUDA_CALL(cudaMalloc(&d_search_results, queries.size() * sizeof(d_Neighbor<T>)));
+    // Launch kernel
+    search_layer_kernel<<<queries.size(), VEC_DIM>>>(
+        d_queries,
+        d_start_ids,
+        d_adjaency_list,
+        d_dataset,
+        d_layer_ef,
+        d_hnsw_result
+    );
 
-    // // Launch kernel
-    // search_layer_kernel<<<queries.size(), VEC_DIM>>>(
-    //     d_queries,
-    //     d_start_ids,
-    //     d_adjaency_list,
-    //     d_dataset,
-    //     d_search_ef,
-    //     d_search_results
-    // );
+    // Fetch hnsw results
+    cudaMemcpy(hnsw_result, d_hnsw_result, queries.size() * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
 
-    // std::cout << "Finished searching base layer" << std::endl;
+    // Free memory
+    cudaFree(d_start_ids);
+    cudaFree(d_queries);
+    cudaFree(d_adjaency_list);
+    cudaFree(d_dataset);
+    cudaFree(d_ef);
+    cudaFree(d_layer_ef);
+    cudaFree(d_layer_result);
+    cudaFree(d_hnsw_result);
 
-
-    // // Fetch layer results
-    // d_Neighbor<T> search_results_array[queries.size()];
+    // Prepare output
     SearchResults search_results(queries.size());
-    // CHECK_CUDA_CALL(cudaMemcpy(search_results_array, d_search_results, queries.size() * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost));
+    // for (size_t i = 0; i < queries.size(); i++) {
+    //     SearchResult search_result = SearchResult();
+    //     for (size_t j = 0; j < ef; j++) {
+    //         search_result.result.emplace_back(hnsw_result[i * ef + j].dist, hnsw_result[i * ef + j].id);
+    //     }
+    //     std::sort(search_result.result.begin(), search_result.result.end(), CompLess());
+    //     search_results.push_back(search_result);
+    // }
 
-
-    // Free constant memory
-    CHECK_CUDA_CALL(cudaFree(d_queries));
-    CHECK_CUDA_CALL(cudaFree(d_ef));
-    CHECK_CUDA_CALL(cudaFree(d_dataset));
-    CHECK_CUDA_CALL(cudaFree(d_start_ids));
-    CHECK_CUDA_CALL(cudaFree(d_adjaency_list));
-    // CHECK_CUDA_CALL(cudaFree(d_search_results));
-    CHECK_CUDA_CALL(cudaFree(d_layer_results));
+    // print Neighbors ids in hnsw_result
+    for (size_t i = 0; i < queries.size(); i++) {
+        for (size_t j = 0; j < ef; j++) {
+            std::cout << "(" << hnsw_result[i * ef + j].id << ", " << hnsw_result[i * ef + j].dist << ") ";
+        }
+        std::cout << std::endl; 
+    }
 
     return search_results;
 }
