@@ -206,9 +206,12 @@ SearchResults search_layer_launch(
 
 
     // Copy dataset to device
+    std::vector<T> dataset_host(ds_size * VEC_DIM);
     for (size_t i = 0; i < ds_size; i++) {
-        cudaMemcpy(d_dataset + i * VEC_DIM, dataset[i].data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+        std::copy(dataset[i].data(), dataset[i].data() + VEC_DIM, dataset_host.data() + i * VEC_DIM);
     }
+    cudaMemcpy(d_dataset, dataset_host.data(), ds_size * VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+
 
     // Copy ef parameter to device
     cudaMemcpy(d_ef, &ef, sizeof(int), cudaMemcpyHostToDevice);
