@@ -139,38 +139,61 @@ namespace ds {
     using Layer = vector<Node>;
 
     struct SearchResult {
-        Neighbors result;
-        double recall = 0;
+        std::vector<Neighbor> result;
+        float recall = 0.0f; // Initialize with a default value
+    
+        void add_neighbor(float dist, int id) {
+            result.emplace_back(dist, id);
+        }
     };
 
     struct SearchResults {
-        vector<SearchResult> results;
-
-        SearchResults(size_t size) : results(size) {}
-        void push_back(const SearchResult& result) { results.emplace_back(result); }
-        void push_back(SearchResult&& result) { results.emplace_back(move(result)); }
-        decltype(auto) operator [] (int i) { return results[i]; }
-
-        void save(const string& log_path, const string& result_path) {
-            ofstream log_ofs(log_path);
-            string line = "query_id,recall";
-            log_ofs << line << endl;
-
-            ofstream result_ofs(result_path);
-            line = "query_id,data_id,dist";
-            result_ofs << line << endl;
-
+        std::vector<SearchResult> results;
+    
+        explicit SearchResults(size_t size) : results(size) {}
+    
+        void push_back(const SearchResult& result) {
+            results.emplace_back(result);
+        }
+    
+        void push_back(SearchResult&& result) {
+            results.emplace_back(std::move(result));
+        }
+    
+        const SearchResult& operator[](size_t i) const {
+            if (i >= results.size()) {
+                throw std::out_of_range("Index out of bounds");
+            }
+            return results[i];
+        }
+    
+        SearchResult& operator[](size_t i) {
+            if (i >= results.size()) {
+                throw std::out_of_range("Index out of bounds");
+            }
+            return results[i];
+        }
+    
+        void save(const std::string& log_path, const std::string& result_path) const {
+            std::ofstream log_ofs(log_path);
+            if (!log_ofs) {
+                throw std::ios_base::failure("Failed to open log file");
+            }
+            log_ofs << "query_id,recall\n";
+    
+            std::ofstream result_ofs(result_path);
+            if (!result_ofs) {
+                throw std::ios_base::failure("Failed to open result file");
+            }
+            result_ofs << "query_id,data_id,dist\n";
+    
             int query_id = 0;
             for (const auto& result : results) {
-                log_ofs << query_id << ","<< result.recall << endl;
-
+                log_ofs << query_id << "," << result.recall << "\n";
                 for (const auto& neighbor : result.result) {
-                    result_ofs << query_id << ","
-                               << neighbor.id << ","
-                               << neighbor.dist << endl;
+                    result_ofs << query_id << "," << neighbor.id << "," << neighbor.dist << "\n";
                 }
-
-                query_id++;
+                ++query_id;
             }
         }
     };

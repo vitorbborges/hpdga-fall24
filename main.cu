@@ -76,7 +76,12 @@ int main() {
 
     auto q_start = get_now();
     SearchResults results_gpu = knn_search(
-
+        queries,
+        index.enter_node_id,
+        ef,
+        index.layers,
+        n,
+        dataset
     );
     auto q_end = get_now();
     total_time_gpu += get_duration(q_start, q_end);
