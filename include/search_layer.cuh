@@ -28,6 +28,7 @@ __global__ void search_layer_kernel(
     T* query = queries + bidx * VEC_DIM;
     int start_node_id = start_ids[bidx];
 
+
     // Shared memory for query data
     static __shared__ T shared_query[VEC_DIM];
     if (tidx < VEC_DIM) {
@@ -51,7 +52,6 @@ __global__ void search_layer_kernel(
         dataset + start_node_id * VEC_DIM,
         VEC_DIM
     );
-    // __syncthreads();
 
     if (tidx == 0) {
         q.insert({start_dist, start_node_id});
@@ -84,25 +84,21 @@ __global__ void search_layer_kernel(
             n_neighbors++;
         }
 
-        // Copy neighbor data to shared memory (test if this is faster)
-        T shared_neighbor_data[K * VEC_DIM];
-        for (size_t i = 0; i < n_neighbors; i++) {
-            shared_neighbor_data[i * VEC_DIM + tidx] = dataset[neighbors_ids[i] * VEC_DIM + tidx];
-        }
-        __syncthreads();
+        
 
         // Check the exit condidtion
-        if (topk.top().dist < now.dist) {
+        bool c = topk.top().dist < now.dist;
+        if (c) {
             break;
         }
         __syncthreads();
 
         // distance computation (convert to bulk?)
-        T shared_distances[K];
+        static __shared__ T shared_distances[K];
         for (size_t i = 0; i < n_neighbors; i++) {
             T dist = euclidean_distance_gpu<T>(
                 shared_query,
-                shared_neighbor_data + i * VEC_DIM,
+                dataset + neighbors_ids[i] * VEC_DIM,
                 VEC_DIM
             );
             __syncthreads();
@@ -120,6 +116,7 @@ __global__ void search_layer_kernel(
 
                 if (shared_distances[i < topk.top().dist] ||
                     topk.get_size() < *ef) {
+                    
                     q.insert({shared_distances[i], neighbors_ids[i]});
                     topk.insert({shared_distances[i], neighbors_ids[i]});
 
@@ -143,6 +140,7 @@ __global__ void search_layer_kernel(
         }
     }
 }
+
 
 template <typename T = float>
 SearchResults search_layer_launch(

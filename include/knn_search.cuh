@@ -32,10 +32,12 @@ void copy_constant_values(
         cudaMemcpy(d_queries + i * VEC_DIM, queries[i].data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
     }
 
-    // copy dataset to device
+    // Copy dataset to device
+    std::vector<T> dataset_host(ds_size * VEC_DIM);
     for (size_t i = 0; i < ds_size; i++) {
-        cudaMemcpy(d_dataset + i * VEC_DIM, dataset[i].data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+        std::copy(dataset[i].data(), dataset[i].data() + VEC_DIM, dataset_host.data() + i * VEC_DIM);
     }
+    cudaMemcpy(d_dataset, dataset_host.data(), ds_size * VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
 
     // copy ef to device
     cudaMemcpy(d_ef, &ef, sizeof(int), cudaMemcpyHostToDevice);
@@ -51,24 +53,22 @@ void copy_layer_values(
     int* d_start_ids,
     const std::vector<Layer>& layers,
     const int& l_c,
-    int* d_adjaency_list
+    const size_t& ds_size,
+    int* d_adjacency_list
 ) {
 
     // copy start ids array to device
     cudaMemcpy(d_start_ids, start_ids, queries_size * sizeof(int), cudaMemcpyHostToDevice);
 
-    // copy fixed degree graph adjency list to device
-    for (Node node: layers[l_c]) {
-        int neighbors_ids[K];
-        std::fill(neighbors_ids, neighbors_ids + K, -1);
-        int node_neighbors_size = node.neighbors.size();
-        if (node_neighbors_size > 0) {
-            for (size_t i = 0; i < node_neighbors_size; i++) {
-                neighbors_ids[i] = node.neighbors[i].id;
-            }
-            cudaMemcpy(d_adjaency_list + node.data.id() * K, neighbors_ids, K * sizeof(int), cudaMemcpyHostToDevice);
+    // Copy adjacency list to device
+    std::vector<int> adjacency_host(ds_size * K, -1);
+    for (Node node : layers[l_c]) {
+        int offset = node.data.id() * K;
+        for (size_t i = 0; i < node.neighbors.size(); i++) {
+            adjacency_host[offset + i] = node.neighbors[i].id;
         }
     }
+    cudaMemcpy(d_adjacency_list, adjacency_host.data(), ds_size * K * sizeof(int), cudaMemcpyHostToDevice);
 }
 
 template <typename T = float>
@@ -99,9 +99,11 @@ SearchResults knn_search(
     const size_t& ds_size,
     const Dataset<float>& dataset
 ) {
+    // CONSTANT ALLOCATIONS
+
     // Allocate query on device
     T* d_queries;
-    cudaMalloc(&d_queries, queries.size() * VEC_DIM * sizeof(T));   
+    cudaMalloc(&d_queries, queries.size() * VEC_DIM * sizeof(T)); 
 
     // Allocate dataset on device
     T* d_dataset;
@@ -116,6 +118,37 @@ SearchResults knn_search(
     cudaMalloc(&d_layer_ef, sizeof(int));
     int one = 1;
 
+    //////////////////////////////////////////////////////////////////////////////
+
+    // LAYER-SPECIFIC ALLOCATIONS
+
+    // Allocate initial search id of each query on device
+    int* d_start_ids;
+    cudaMalloc(&d_start_ids, queries.size() * sizeof(int));
+
+    // Initialize start ids array to start_node_id
+    int start_ids[queries.size()];
+    std::fill(start_ids, start_ids + queries.size(), start_node_id);
+
+    // Allocate fixed degree graph adjency list on device
+    int* d_adjacency_list;
+    cudaMalloc(&d_adjacency_list, ds_size * K * sizeof(int));
+
+    // Allocate layer search result on device
+    d_Neighbor<T> layer_result[queries.size()];
+    d_Neighbor<T>* d_layer_result;
+    cudaMalloc(&d_layer_result, queries.size() * sizeof(d_Neighbor<T>));
+
+    // Allocate hnsw search result on device
+    d_Neighbor<T> hnsw_result[ef * queries.size()];
+    d_Neighbor<T>* d_hnsw_result;
+    cudaMalloc(&d_hnsw_result, ef * queries.size() * sizeof(d_Neighbor<T>));
+
+    //////////////////////////////////////////////////////////////////////////////
+
+    // Create streams
+    cudaStream_t streams[l_c];
+
     // COPY VALUES THAT WILL NOT CHANGE ON LAYER INTERATION
     copy_constant_values(
         queries,
@@ -129,27 +162,6 @@ SearchResults knn_search(
         one
     );
 
-    // Allocate initial search id of each query on device
-    int* d_start_ids;
-    cudaMalloc(&d_start_ids, queries.size() * sizeof(int));
-
-    // Initialize start ids array to start_node_id
-    int start_ids[queries.size()];
-    std::fill(start_ids, start_ids + queries.size(), start_node_id);
-
-    // Allocate fixed degree graph adjency list on device
-    int* d_adjaency_list;
-    cudaMalloc(&d_adjaency_list, ds_size * K * sizeof(int));
-
-    // Allocate layer search result on device
-    d_Neighbor<T> layer_result[queries.size()];
-    d_Neighbor<T>* d_layer_result;
-    cudaMalloc(&d_layer_result, queries.size() * sizeof(d_Neighbor<T>));
-
-    // Allocate hnsw search result on device
-    d_Neighbor<T> hnsw_result[ef * queries.size()];
-    d_Neighbor<T>* d_hnsw_result;
-    cudaMalloc(&d_hnsw_result, ef * queries.size() * sizeof(d_Neighbor<T>));
     
     for (int l_c = layers.size() - 1; l_c >= 0; l_c--) {
 
@@ -179,14 +191,15 @@ SearchResults knn_search(
             d_start_ids,
             layers,
             l_c,
-            d_adjaency_list
+            ds_size,
+            d_adjacency_list
         );
         
         // Launch kernel
         search_layer_kernel<<<queries.size(), VEC_DIM>>>(
             d_queries,
             d_start_ids,
-            d_adjaency_list,
+            d_adjacency_list,
             d_dataset,
             d_current_ef,
             d_current_result
@@ -206,7 +219,7 @@ SearchResults knn_search(
     // Free memory
     cudaFree(d_start_ids);
     cudaFree(d_queries);
-    cudaFree(d_adjaency_list);
+    cudaFree(d_adjacency_list);
     cudaFree(d_dataset);
     cudaFree(d_ef);
     cudaFree(d_layer_ef);
