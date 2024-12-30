@@ -185,8 +185,7 @@ SearchResults search_layer_launch(
 
     cudaMalloc(&d_adjacency_list, ds_size * K * sizeof(int));
     cudaMalloc(&d_dataset, ds_size * VEC_DIM * sizeof(T));
-    cudaMalloc(&d_ef, sizeof(int));
-    cudaMalloc(&d_result, num_queries * ef * sizeof(d_Neighbor<T>));
+    
 
     // Copy adjacency list to device
     std::vector<int> adjacency_host(ds_size * K, -1);
@@ -204,6 +203,9 @@ SearchResults search_layer_launch(
         std::copy(dataset[i].data(), dataset[i].data() + VEC_DIM, dataset_host.data() + i * VEC_DIM);
     }
     cudaMemcpy(d_dataset, dataset_host.data(), ds_size * VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+
+    cudaMalloc(&d_ef, sizeof(int));
+    cudaMalloc(&d_result, num_queries * ef * sizeof(d_Neighbor<T>));
 
     // Copy ef parameter to device
     cudaMemcpy(d_ef, &ef, sizeof(int), cudaMemcpyHostToDevice);
