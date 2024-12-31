@@ -146,9 +146,6 @@ SearchResults knn_search(
 
     //////////////////////////////////////////////////////////////////////////////
 
-    // Create streams
-    cudaStream_t streams[l_c];
-
     // COPY VALUES THAT WILL NOT CHANGE ON LAYER INTERATION
     copy_constant_values(
         queries,
