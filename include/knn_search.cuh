@@ -10,6 +10,8 @@ template <typename T = float>
 void copy_constant_values(
     const Dataset<T>& queries,
     T*& d_queries,
+    const int& start_node_id,
+    d_Neighbor<T>* d_start_ids,
     T* d_dataset,
     const Dataset<float>& dataset,
     const size_t& ds_size,
@@ -27,6 +29,13 @@ void copy_constant_values(
         std::copy(queries[i].data(), queries[i].data() + VEC_DIM, queries_host.data() + i * VEC_DIM);
     }
     cudaMemcpy(d_queries, queries_host.data(), queries.size() * VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+
+    // Copy start ids to device
+    d_Neighbor<T> start_ids[queries.size()];
+    for (size_t i = 0; i < queries.size(); i++) {
+        start_ids[i] = {0.0f, start_node_id};
+    }
+    cudaMemcpy(d_start_ids, start_ids, queries.size() * sizeof(d_Neighbor<T>), cudaMemcpyHostToDevice);
 
     // Copy dataset to device
     std::vector<T> dataset_host(ds_size * VEC_DIM);
@@ -52,41 +61,16 @@ void copy_layer_values(
     int* d_adjacency_list,
     cudaStream_t stream
 ) {
-    nvtxRangeId_t layercopyId = nvtxRangeStartA("Layer copies");
 
-    // Struct to hold user data for host function
-    struct HostData {
-        const Layer& layer;
-        size_t ds_size;
-        int k;
-        std::vector<int> adjacency_host;
-    };
-
-    // Stack-allocated adjacency_host
-    HostData* host_data = new HostData{layers[l_c], ds_size, K, std::vector<int>(ds_size * K, -1)};
-
-    cudaHostFn_t host_fn = [](void* userData) {
-        HostData* data = static_cast<HostData*>(userData);
-        const Layer& layer = data->layer;
-        size_t ds_size = data->ds_size;
-        int k = data->k;
-        std::vector<int>& adjacency_host = data->adjacency_host;
-
-        for (size_t idx = 0; idx < layer.size(); idx++) {
-            const Node& node = layer[idx];
-            int offset = node.data.id() * k;
-            for (size_t i = 0; i < node.neighbors.size(); i++) {
-                adjacency_host[offset + i] = node.neighbors[i].id;
-            }
+    // Copy adjacency list to device
+    std::vector<int> adjacency_host(ds_size * K, -1);
+    for (Node node : layers[l_c]) {
+        int offset = node.data.id() * K;
+        for (size_t i = 0; i < node.neighbors.size(); i++) {
+            adjacency_host[offset + i] = node.neighbors[i].id;
         }
-    };
-
-    cudaLaunchHostFunc(stream, host_fn, host_data);
-
-    // Copy adjacency list to device after host function execution
-    cudaMemcpyAsync(d_adjacency_list, host_data->adjacency_host.data(), ds_size * K * sizeof(int), cudaMemcpyHostToDevice, stream);
-
-    nvtxRangeEnd(layercopyId);
+    }
+    cudaMemcpyAsync(d_adjacency_list, adjacency_host.data(), ds_size * K * sizeof(int), cudaMemcpyHostToDevice, stream);
 }
 
 template <typename T = float>
@@ -142,11 +126,18 @@ SearchResults knn_search(
 
     warmup();
 
-    size_t sharedMemSize = 0;
-    sharedMemSize += VEC_DIM * sizeof(T);
-    sharedMemSize += 2 * MAX_HEAP_SIZE * sizeof(d_Neighbor<T>);
-    sharedMemSize += 2 * sizeof(int);
-    sharedMemSize += K * sizeof(T);
+    size_t shared_query_size = VEC_DIM * sizeof(T); // For shared_query
+    size_t candidates_array_size = MAX_HEAP_SIZE * sizeof(d_Neighbor<T>); // For candidates_array
+    size_t top_candidates_array_size = MAX_HEAP_SIZE * sizeof(d_Neighbor<T>); // For top_candidates_array
+    size_t shared_visited_size = DATASET_SIZE * sizeof(bool); // For shared_visited
+    size_t shared_distances_size = MAX_HEAP_SIZE * sizeof(T); // For shared_distances
+
+    // Total shared memory size
+    size_t sharedMemSize = shared_query_size +
+                                   candidates_array_size +
+                                   top_candidates_array_size +
+                                   shared_visited_size +
+                                   shared_distances_size;
 
 
     // CONSTANT ALLOCATIONS
@@ -182,13 +173,6 @@ SearchResults knn_search(
     d_Neighbor<T>* d_start_ids;
     cudaMalloc(&d_start_ids, queries.size() * sizeof(d_Neighbor<T>));
 
-    // Initialize start ids array to start_node_id
-    d_Neighbor<T> start_ids[queries.size()];
-    for (size_t i = 0; i < queries.size(); i++) {
-        start_ids[i] = {0.0f, start_node_id};
-    }
-    cudaMemcpy(d_start_ids, start_ids, queries.size() * sizeof(d_Neighbor<T>), cudaMemcpyHostToDevice);
-
     // Allocate fixed degree graph adjency list on device
     int* d_adjacency_list;
     cudaMalloc(&d_adjacency_list, ds_size * K * sizeof(int));
@@ -219,12 +203,20 @@ SearchResults knn_search(
         cudaEventCreate(&endcpy_events[i]);
     }
 
+    // Create end of fetching results events
+    cudaEvent_t endfetch_events[layers.size() + 1];
+    for (int i = 0; i <= layers.size(); i++) {
+        cudaEventCreate(&endfetch_events[i]);
+    }
+
     q_start = get_now();
 
     // COPY VALUES THAT WILL NOT CHANGE ON LAYER INTERATION
     copy_constant_values(
         queries,
         d_queries,
+        start_node_id,
+        d_start_ids,
         d_dataset,
         dataset,
         ds_size,
@@ -235,12 +227,13 @@ SearchResults knn_search(
     );
 
     cudaEventRecord(endcpy_events[0], streams[0]);
+    cudaEventRecord(endfetch_events[0], streams[0]);
 
     
     for (int l_c = layers.size() - 1; l_c >= 0; l_c--) {
 
         int streamIdx = layers.size() - l_c;
-        // cudaStreamWaitEvent(streams[streamIdx - 1], endcpy_events[streamIdx - 1]);
+        cudaStreamWaitEvent(streams[streamIdx - 1], endcpy_events[streamIdx - 1]);
 
         // Initialize current layer parameters
         d_Neighbor<T>* d_current_start_ids;
@@ -274,14 +267,16 @@ SearchResults knn_search(
             l_c,
             ds_size,
             d_adjacency_list,
-            0
+            streams[streamIdx]
         );
 
-        cudaEventRecord(endcpy_events[streamIdx], 0);
+        cudaEventRecord(endcpy_events[streamIdx], streams[streamIdx]);
+
+        cudaStreamWaitEvent(streams[streamIdx - 1], endfetch_events[streamIdx - 1]);
 
         nvtxRangeId_t kernelId = nvtxRangeStartA("Kernel execution");
         // Launch kernel
-        search_layer_kernel<<<queries.size(), VEC_DIM>>>(
+        search_layer_kernel<<<queries.size(), VEC_DIM, sharedMemSize, streams[streamIdx]>>>(
             d_queries,
             d_current_start_ids,
             d_adjacency_list,
@@ -297,8 +292,9 @@ SearchResults knn_search(
             current_result,
             current_ef,
             queries.size(),
-            0
+            streams[streamIdx]
         );
+        cudaEventRecord(endfetch_events[streamIdx], streams[streamIdx]);
     }
 
     q_end = get_now();
