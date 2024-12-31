@@ -32,6 +32,9 @@ message(STATUS "Using CUDA architecture: ${CUDA_ARCH}")
 # Set CUDA architectures
 set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCH})
 
+# Add the -lineinfo flag to the CUDA compiler options
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
+
 # Include directories
 include_directories(include)
 

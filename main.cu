@@ -77,16 +77,18 @@ int main() {
     long total_time_gpu = 0;
     cout << "Start searching GPU" << endl;
 
-    auto q_start = get_now();
+    std::chrono::system_clock::time_point q_start;
+    std::chrono::system_clock::time_point q_end;
     SearchResults results_gpu = knn_search(
         test_queries,
         index.enter_node_id,
         test_ef,
         index.layers,
         n,
-        dataset
+        dataset,
+        q_start,
+        q_end
     );
-    auto q_end = get_now();
     total_time_gpu += get_duration(q_start, q_end);
 
     // Calculate recall

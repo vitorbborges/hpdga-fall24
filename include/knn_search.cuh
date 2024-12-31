@@ -4,15 +4,7 @@
 #include <cuda_runtime.h>
 #include "search_layer.cuh"
 
-#define CHECK_CUDA_CALL(call)                                                                \
-    do {                                                                                     \
-        cudaError_t err = call;                                                              \
-        if (err != cudaSuccess) {                                                            \
-            std::cerr << "CUDA error at " << __FILE__ << ":" << __LINE__ << ": "             \
-                      << cudaGetErrorString(err) << std::endl;                               \
-            exit(EXIT_FAILURE);                                                              \
-        }                                                                                    \
-    } while (0)
+#include <nvtx3/nvToolsExt.h>
 
 template <typename T = float>
 void copy_constant_values(
@@ -27,10 +19,14 @@ void copy_constant_values(
     const size_t& one
 ) {
 
+    nvtxRangeId_t constcopyId = nvtxRangeStartA("Constant copies");
+
     // copy queries to device
+    std::vector<T> queries_host(queries.size() * VEC_DIM);
     for (size_t i = 0; i < queries.size(); i++) {
-        cudaMemcpy(d_queries + i * VEC_DIM, queries[i].data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+        std::copy(queries[i].data(), queries[i].data() + VEC_DIM, queries_host.data() + i * VEC_DIM);
     }
+    cudaMemcpy(d_queries, queries_host.data(), queries.size() * VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
 
     // Copy dataset to device
     std::vector<T> dataset_host(ds_size * VEC_DIM);
@@ -44,32 +40,67 @@ void copy_constant_values(
 
     // copy layer ef to device
     cudaMemcpy(d_layer_ef, &one, sizeof(int), cudaMemcpyHostToDevice);
+
+    nvtxRangeEnd(constcopyId);
     
 }
 
 void copy_layer_values(
-    const int* start_ids,
-    const size_t& queries_size,
-    int* d_start_ids,
     const std::vector<Layer>& layers,
     const int& l_c,
     const size_t& ds_size,
-    int* d_adjacency_list
+    int* d_adjacency_list,
+    cudaStream_t stream
 ) {
+    nvtxRangeId_t layercopyId = nvtxRangeStartA("Layer copies");
 
-    // copy start ids array to device
-    cudaMemcpy(d_start_ids, start_ids, queries_size * sizeof(int), cudaMemcpyHostToDevice);
+    // Struct to hold user data for host function
+    struct HostData {
+        const Layer& layer;
+        size_t ds_size;
+        int k;
+        std::vector<int> adjacency_host;
+    };
 
-    // Copy adjacency list to device
-    std::vector<int> adjacency_host(ds_size * K, -1);
-    for (Node node : layers[l_c]) {
-        int offset = node.data.id() * K;
-        for (size_t i = 0; i < node.neighbors.size(); i++) {
-            adjacency_host[offset + i] = node.neighbors[i].id;
+    // Stack-allocated adjacency_host
+    HostData* host_data = new HostData{layers[l_c], ds_size, K, std::vector<int>(ds_size * K, -1)};
+
+    cudaHostFn_t host_fn = [](void* userData) {
+        HostData* data = static_cast<HostData*>(userData);
+        const Layer& layer = data->layer;
+        size_t ds_size = data->ds_size;
+        int k = data->k;
+        std::vector<int>& adjacency_host = data->adjacency_host;
+
+        for (size_t idx = 0; idx < layer.size(); idx++) {
+            const Node& node = layer[idx];
+            int offset = node.data.id() * k;
+            for (size_t i = 0; i < node.neighbors.size(); i++) {
+                adjacency_host[offset + i] = node.neighbors[i].id;
+            }
         }
-    }
-    cudaMemcpy(d_adjacency_list, adjacency_host.data(), ds_size * K * sizeof(int), cudaMemcpyHostToDevice);
+    };
+
+    cudaLaunchHostFunc(stream, host_fn, host_data);
+
+    // Copy adjacency list to device after host function execution
+    cudaMemcpyAsync(d_adjacency_list, host_data->adjacency_host.data(), ds_size * K * sizeof(int), cudaMemcpyHostToDevice, stream);
+
+    nvtxRangeEnd(layercopyId);
 }
+
+template <typename T = float>
+void fetch_layer_results(
+    d_Neighbor<T>* d_layer_result,
+    d_Neighbor<T>* layer_result,
+    const int& ef,
+    const size_t& queries_size,
+    cudaStream_t stream
+) {
+    // Fetch layer results concurrently
+    cudaMemcpyAsync(layer_result, d_layer_result, ef * queries_size * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost, stream);
+}
+
 
 template <typename T = float>
 SearchResults prepare_output(
@@ -90,6 +121,13 @@ SearchResults prepare_output(
     return search_results;
 }
 
+__global__ void warmup_kernel() {}
+
+void warmup() {
+    warmup_kernel<<<1, 1>>>();
+    cudaDeviceSynchronize(); // Ensure everything is initialized
+}
+
 template <typename T = float>
 SearchResults knn_search(
     const Dataset<T>& queries,
@@ -97,9 +135,23 @@ SearchResults knn_search(
     const int& ef,
     const std::vector<Layer>& layers,
     const size_t& ds_size,
-    const Dataset<float>& dataset
+    const Dataset<float>& dataset,
+    std::chrono::system_clock::time_point& q_start,
+    std::chrono::system_clock::time_point& q_end
 ) {
+
+    warmup();
+
+    size_t sharedMemSize = 0;
+    sharedMemSize += VEC_DIM * sizeof(T);
+    sharedMemSize += 2 * MAX_HEAP_SIZE * sizeof(d_Neighbor<T>);
+    sharedMemSize += 2 * sizeof(int);
+    sharedMemSize += K * sizeof(T);
+
+
     // CONSTANT ALLOCATIONS
+
+    nvtxRangeId_t constallocId = nvtxRangeStartA("Constant allocations");
 
     // Allocate query on device
     T* d_queries;
@@ -118,17 +170,24 @@ SearchResults knn_search(
     cudaMalloc(&d_layer_ef, sizeof(int));
     int one = 1;
 
+    nvtxRangeEnd(constallocId);
+
     //////////////////////////////////////////////////////////////////////////////
 
     // LAYER-SPECIFIC ALLOCATIONS
 
+    nvtxRangeId_t layerallocId = nvtxRangeStartA("Layer-specific allocations");
+
     // Allocate initial search id of each query on device
-    int* d_start_ids;
-    cudaMalloc(&d_start_ids, queries.size() * sizeof(int));
+    d_Neighbor<T>* d_start_ids;
+    cudaMalloc(&d_start_ids, queries.size() * sizeof(d_Neighbor<T>));
 
     // Initialize start ids array to start_node_id
-    int start_ids[queries.size()];
-    std::fill(start_ids, start_ids + queries.size(), start_node_id);
+    d_Neighbor<T> start_ids[queries.size()];
+    for (size_t i = 0; i < queries.size(); i++) {
+        start_ids[i] = {0.0f, start_node_id};
+    }
+    cudaMemcpy(d_start_ids, start_ids, queries.size() * sizeof(d_Neighbor<T>), cudaMemcpyHostToDevice);
 
     // Allocate fixed degree graph adjency list on device
     int* d_adjacency_list;
@@ -144,10 +203,23 @@ SearchResults knn_search(
     d_Neighbor<T>* d_hnsw_result;
     cudaMalloc(&d_hnsw_result, ef * queries.size() * sizeof(d_Neighbor<T>));
 
+    nvtxRangeEnd(layerallocId);
+
     //////////////////////////////////////////////////////////////////////////////
 
     // Create streams
-    cudaStream_t streams[l_c];
+    cudaStream_t streams[layers.size() + 1];
+    for (int i = 0; i <= layers.size(); i++) {
+        cudaStreamCreate(&streams[i]);
+    }
+
+    // Create end of copying events
+    cudaEvent_t endcpy_events[layers.size() + 1];
+    for (int i = 0; i <= layers.size(); i++) {
+        cudaEventCreate(&endcpy_events[i]);
+    }
+
+    q_start = get_now();
 
     // COPY VALUES THAT WILL NOT CHANGE ON LAYER INTERATION
     copy_constant_values(
@@ -162,16 +234,28 @@ SearchResults knn_search(
         one
     );
 
+    cudaEventRecord(endcpy_events[0], streams[0]);
+
     
     for (int l_c = layers.size() - 1; l_c >= 0; l_c--) {
 
+        int streamIdx = layers.size() - l_c;
+        // cudaStreamWaitEvent(streams[streamIdx - 1], endcpy_events[streamIdx - 1]);
+
         // Initialize current layer parameters
+        d_Neighbor<T>* d_current_start_ids;
         int* d_current_ef;
         int current_ef;
         d_Neighbor<T>* d_current_result;
         d_Neighbor<T>* current_result;
 
         // Set current layer parameters
+        if (l_c == layers.size() - 1) { // if on first layer
+            d_current_start_ids = d_start_ids;
+        } else { // use previous layer's result as start_ids
+            d_current_start_ids = d_layer_result;
+        }
+
         if (l_c > 0) { // if on upper layers
             d_current_ef = d_layer_ef;
             current_ef = one;
@@ -186,35 +270,38 @@ SearchResults knn_search(
         
         // copy layer-specific data to device memory
         copy_layer_values(
-            start_ids,
-            queries.size(),
-            d_start_ids,
             layers,
             l_c,
             ds_size,
-            d_adjacency_list
+            d_adjacency_list,
+            0
         );
-        
+
+        cudaEventRecord(endcpy_events[streamIdx], 0);
+
+        nvtxRangeId_t kernelId = nvtxRangeStartA("Kernel execution");
         // Launch kernel
         search_layer_kernel<<<queries.size(), VEC_DIM>>>(
             d_queries,
-            d_start_ids,
+            d_current_start_ids,
             d_adjacency_list,
             d_dataset,
             d_current_ef,
             d_current_result
         );
+        nvtxRangeEnd(kernelId);
 
         // Fetch layer results
-        cudaMemcpy(current_result, d_current_result, current_ef * queries.size() * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
-
-        if (l_c == 0) break;
-
-        // Update start_ids for next layer
-        for (size_t i = 0; i < current_ef * queries.size(); i++) {
-            start_ids[i] = current_result[i].id;
-        }
+        fetch_layer_results(
+            d_current_result,
+            current_result,
+            current_ef,
+            queries.size(),
+            0
+        );
     }
+
+    q_end = get_now();
 
     // Free memory
     cudaFree(d_start_ids);
