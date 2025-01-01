@@ -51,7 +51,7 @@ int main() {
     // Test parameters
     Dataset<float> test_queries = queries;
     int test_n_query = test_queries.size();
-    int test_ef = 30;
+    int test_ef = 1;
 
     // CPU Calculation
     long total_time_cpu = 0;
