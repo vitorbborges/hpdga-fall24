@@ -86,7 +86,7 @@ namespace utils {
                 values[j] = buffer[i * (d + 1) + j + 1]; // Start from 1 to skip the dimension value
             }
             // Pass the array pointer to the Data constructor
-            dataset.push_back(Data<float>(a + i - 1, values, d)); // Index starts from 0
+            dataset.push_back(Data<float>(a + i - 1, values)); // Index starts from 0
         }
 
         file.close();
