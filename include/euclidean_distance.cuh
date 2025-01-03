@@ -60,7 +60,7 @@ T euclidean_distance_cpu(const T *vec1, const T *vec2, int dimensions) {
 // and warp-level reductions
 template <typename T>
 __inline__ __device__ T euclidean_distance_gpu(const T *vec1, const T *vec2,
-                                      const int dimensions, const int vec_idx) {
+                                      const int dimensions) {
   __shared__ T shared[32];     // Shared memory for partial sums
   int warp = threadIdx.x / 32; // Warp index
   int lane = threadIdx.x % 32; // Lane index within the warp
@@ -68,7 +68,7 @@ __inline__ __device__ T euclidean_distance_gpu(const T *vec1, const T *vec2,
 
   // Accumulate partial sum for each thread's portion of the vector
   for (int i = threadIdx.x; i < dimensions; i += blockDim.x) {
-    T diff = vec1[vec_idx * dimensions + i] - vec2[vec_idx * dimensions + i];
+    T diff = vec1[i] - vec2[i];
     val += diff * diff;
   }
 
@@ -125,50 +125,6 @@ __inline__ __device__ T euclideanGPUatomic(const T *vec1, const T *vec2,
   __syncthreads();
 
   return shared[0];
-}
-
-// Kernel to compute batch Euclidean distances using the atomic function
-template <typename T>
-__global__ void batch_euclidean_distance_atomic(const T *vec1, const T *vec2,
-                                                T *distances, int num_vectors,
-                                                int dimensions) {
-  int vec_idx = blockIdx.x; // Each block handles a single vector pair
-  if (vec_idx >= num_vectors)
-    return; // Out-of-bounds check
-
-  T distance = euclideanGPUatomic(&vec1[vec_idx * dimensions],
-                                  &vec2[vec_idx * dimensions], dimensions);
-
-  // Store the final distance after applying sqrt
-  if (threadIdx.x == 0) {
-    distances[vec_idx] = sqrtf(distance);
-  }
-}
-
-// Kernel to compute batch Euclidean distances without optimizations
-__global__ void batch_euclidean_distance(const float *vec1, const float *vec2,
-                                         float *distances, int num_vectors,
-                                         int dimensions) {
-  int vec_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (vec_idx >= num_vectors)
-    return;
-
-  distances[vec_idx] = euclidean_distance(
-      &vec1[vec_idx * dimensions], &vec2[vec_idx * dimensions], dimensions);
-}
-
-// Kernel to compute batch distances using the optimized method
-__global__ void batch_gpu(const float *vec1, const float *vec2,
-                          float *distances, int num_vectors, int dimensions) {
-  int vec_idx = blockIdx.x; // Each block processes one vector pair
-  if (vec_idx >= num_vectors)
-    return;
-
-  float distance = euclidean_distance_gpu(vec1, vec2, dimensions, vec_idx);
-
-  if (threadIdx.x == 0) {
-    distances[vec_idx] = distance;
-  }
 }
 
 #endif // HNSW_EUCLIDEAN_DISTANCE_CUH
