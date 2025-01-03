@@ -4,8 +4,8 @@
 
 __global__ void testSMMH() {
     // Shared memory for the heap and size
-    __shared__ d_Neighbor<float> sharedHeap[HEAP_SIZE];
-    __shared__ int sharedSize;
+    extern __shared__ d_Neighbor<float> sharedHeap[];
+     __shared__ int sharedSize;
 
     // Initialize the heap
     SymmetricMinMaxHeap<float> heap;
@@ -112,7 +112,9 @@ __global__ void testSMMH() {
 
 int main() {
     // Launch a single CUDA block with one thread
-    testSMMH<<<1, 32>>>();
+    int sharedMemSize = HEAP_SIZE * sizeof(d_Neighbor<float>);
+
+    testSMMH<<<1, 32, sharedMemSize>>>();
 
     // Synchronize to wait for kernel completion
     cudaDeviceSynchronize();
