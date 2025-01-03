@@ -1,10 +1,11 @@
 #ifndef HNSW_DATA_STRUCTURES_CUH
 #define HNSW_DATA_STRUCTURES_CUH
-#include <iostream>
-#include <string>
-#include <sstream>
-#include <ofstream>
+
 #include <vector>
+#include <string>
+#include <stdexcept>
+#include <fstream>
+#include <iostream>
 
 using namespace std;
 
