@@ -1,4 +1,4 @@
-#include "priority_queue.cuh"
+//#include "priority_queue.cuh"
 #include "symmetric_mmh.cuh"
 #include <cassert>
 
@@ -90,10 +90,11 @@ int main() {
     // Launch a single CUDA block with multiple threads
     testSMMH<<<1, 32>>>();
 
-    printf("All tests passed!\n");
-
     // Synchronize to wait for kernel completion
     cudaDeviceSynchronize();
+
+    // Print
+    printf("All tests passed!\n");
 
     return 0;
 }
