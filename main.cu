@@ -15,7 +15,6 @@ int main() {
         h_vec2[i] = static_cast<float>(rand()) / RAND_MAX;
     }
     // CPU computation
-    std::cout << "Running CPU Euclidean distance computation..." << std::endl;
     auto start_cpu = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < num_vectors; ++i) {
         h_distances_cpu[i] = euclidean_distance_cpu<float>(
@@ -25,9 +24,7 @@ int main() {
         );
     }
     auto end_cpu = std::chrono::high_resolution_clock::now();
-    std::cout << "CPU computation time: "
-              << std::chrono::duration_cast<std::chrono::nanoseconds>(end_cpu - start_cpu).count()
-              << " ns" << std::endl;
+
     // Allocate device memory
     float *d_vec1, *d_vec2, *d_distances;
     cudaMalloc(&d_vec1, num_vectors * dimensions * sizeof(float));
@@ -40,14 +37,12 @@ int main() {
     const int threads_per_block = 256;
     const int blocks_per_grid = (num_vectors + threads_per_block - 1) / threads_per_block;
     // Run non-optimized GPU kernel
-    std::cout << "Running non-optimized GPU kernel..." << std::endl;
     auto start_simple = std::chrono::high_resolution_clock::now();
     batch_euclidean_distance<<<blocks_per_grid, threads_per_block>>>(d_vec1, d_vec2, d_distances, num_vectors, dimensions);
     cudaDeviceSynchronize();
     auto end_simple = std::chrono::high_resolution_clock::now();
     cudaMemcpy(h_distances_simple.data(), d_distances, num_vectors * sizeof(float), cudaMemcpyDeviceToHost);
     // Run optimized GPU kernel
-    std::cout << "Running optimized GPU kernel..." << std::endl;
     auto start_kepler = std::chrono::high_resolution_clock::now();
     batch_gpu<<<blocks_per_grid, threads_per_block>>>(d_vec1, d_vec2, d_distances, num_vectors, dimensions);
     cudaDeviceSynchronize();
@@ -55,30 +50,13 @@ int main() {
     
     cudaMemcpy(h_distances_kepler.data(), d_distances, num_vectors * sizeof(float), cudaMemcpyDeviceToHost);
     // Run optimized GPU kernel
-    std::cout << "Running optimized GPU kernel with atomic..." << std::endl;
     auto start_atomic = std::chrono::high_resolution_clock::now();
     batch_euclidean_distance_atomic<<<blocks_per_grid, threads_per_block>>>(d_vec1, d_vec2, d_distances, num_vectors, dimensions);
     cudaDeviceSynchronize();
     auto end_atomic = std::chrono::high_resolution_clock::now();
     
     cudaMemcpy(h_distances_atomic.data(), d_distances, num_vectors * sizeof(float), cudaMemcpyDeviceToHost);
-    // Compare results
-    bool valid = true;
-    for (int i = 0; i < num_vectors; ++i) {
-        if (fabs(h_distances_cpu[i] - h_distances_simple[i]) > 1e-5 ||
-            fabs(h_distances_cpu[i] - h_distances_kepler[i]) > 1e-5 ||
-            fabs(h_distances_cpu[i] - h_distances_atomic[i]) > 1e-5) {
-            valid = false;
-            printf("Mismatch at index %d: CPU=%.6f, Simple=%.6f, Kepler=%.6f\n",
-                   i, h_distances_cpu[i], h_distances_simple[i], h_distances_kepler[i]);
-            break;
-        }
-    }
-    if (valid) {
-        printf("All results match!\n");
-    } else {
-        printf("Results do not match!\n");
-    }
+
     // Print execution times
     std::cout << "CPU computation time: "
               << std::chrono::duration_cast<std::chrono::nanoseconds>(end_cpu - start_cpu).count()
@@ -92,9 +70,28 @@ int main() {
     std::cout << "Optimized GPU with atomic kernel time: "
               << std::chrono::duration_cast<std::chrono::nanoseconds>(end_atomic - start_atomic).count()
               << " ns" << std::endl;
+
+
+    // Compare results
+    bool valid = true;
+    for (int i = 0; i < num_vectors; ++i) {
+        if (fabs(h_distances_cpu[i] - h_distances_simple[i]) > 1e-5 ||
+            fabs(h_distances_cpu[i] - h_distances_kepler[i]) > 1e-5 ||
+            fabs(h_distances_cpu[i] - h_distances_atomic[i]) > 1e-5) {
+            valid = false;
+            break;
+        }
+    }
+    
+    if (valid) {
+        printf("All results match!\n");
+    } else {
+        printf("Results do not match!\n");
+    }
+
     // Print first 50 distances for comparison
     std::cout << "\nFirst 50 results comparison:\n";
-    std::cout << "Index\tCPU\t\tSimple GPU\tOptimized GPU\n";
+    std::cout << "Index\tCPU\tSimple GPU\tOptimized GPU\n";
     for (int i = 0; i < 50; ++i) {
         std::cout << i << "\t" << h_distances_cpu[i] << "\t" << h_distances_simple[i]
                   << "\t" << h_distances_kepler[i] << "\t" << h_distances_atomic[i] << std::endl;
