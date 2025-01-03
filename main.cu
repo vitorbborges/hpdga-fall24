@@ -34,35 +34,46 @@ int main() {
     const auto build_time = get_duration(start, end);
     cout << "index_construction: " << build_time / 1000 << " [ms]" << endl;
 
-    int test_k = 100;
-    int test_layer = 0;
-    Dataset<float> test_queries;
-    test_queries.push_back(queries[66]);
+    int test_k = 4;
+    int test_layer = 3;
+    Dataset<float> test_queries = queries;
     int test_n_query = test_queries.size();
 
     // Measure GPU time
-    cout << "Start GPU search" << endl;
-    const auto gpu_start = get_now();
-    auto search_results = search_layer_launch(
+    std::chrono::system_clock::time_point gpu_start;
+    std::chrono::system_clock::time_point gpu_end;
+    auto results_gpu = search_layer_launch(
         test_queries,
         index.enter_node_id,
         test_k,
-        index.layers,
-        test_layer,
+        index.layers[test_layer],
+        index.layer_map.at(test_layer),
         dataset.size(),
-        dataset
+        dataset,
+        gpu_start,
+        gpu_end
     );
-    const auto gpu_end = get_now();
     const auto gpu_duration = get_duration(gpu_start, gpu_end);
     cout << "GPU search time: " << gpu_duration / 1000 << " [ms]" << endl;
 
-    cout << "cuda results: " << endl;
-    search_results.print_results();
+    // Calculate recall
+    for (int i = 0; i < test_n_query; i++) {
+        results_gpu[i].recall = calc_recall(results_gpu[i].result, ground_truth[i], k);
+    }
+    
+    // print average recall
+    float avg_recall_gpu = 0;
+    for (int i = 0; i < test_n_query; i++) {
+        avg_recall_gpu += results_gpu[i].recall;
+    }
+    avg_recall_gpu /= test_n_query;
+    cout << "Average recall: " << avg_recall_gpu << endl;
+
+    results_gpu.print_results();
 
     // Measure CPU time
-    cout << "Start CPU search" << endl;
     const auto cpu_start = get_now();
-    SearchResults cpu_results(test_n_query);
+    SearchResults results_cpu(test_n_query);
     for (size_t i = 0; i < test_n_query; i++) {
         auto cpu_result = index.search_layer(
             test_queries[i],
@@ -77,26 +88,30 @@ int main() {
             n.id = cpu_result.result[j].id;
             n.dist = cpu_result.result[j].dist;
             sr.result.push_back(n);
+            sr.recall = calc_recall(sr.result, ground_truth[i], k);
         }
-        cpu_results[i] = sr;
+        results_cpu[i] = sr;
     }
     const auto cpu_end = get_now();
     const auto cpu_duration = get_duration(cpu_start, cpu_end);
     cout << "CPU search time: " << cpu_duration / 1000 << " [ms]" << endl;
 
-    cout << "cpu results: " << endl;
-    cpu_results.print_results();
+    // print average recall
+    float avg_recall_cpu = 0;
+    for (int i = 0; i < test_n_query; i++) {
+        avg_recall_cpu += results_cpu[i].recall;
+    }
+    avg_recall_cpu /= test_n_query;
+    cout << "Average recall: " << avg_recall_cpu << endl;
+
+    results_cpu.print_results();
 
     // Check if results are the same using precomputed CPU results
     bool mismatch_found = false;
     for (size_t i = 0; i < test_n_query; i++) {
         for (size_t j = 0; j < test_k; j++) {
-            if (search_results[i].result[j].id != cpu_results[i].result[j].id
-                || search_results[i].result[j].dist != cpu_results[i].result[j].dist) {
-                cout << "Mismatch found at query_id: " << i << " resuslt_id: " << j << endl;
-                cout << "GPU: " << search_results[i].result[j].id << " " << search_results[i].result[j].dist << endl;
-                cout << "CPU: " << cpu_results[i].result[j].id << " " << cpu_results[i].result[j].dist << endl;
-                cout << "--------------------------------" << endl;
+            if (results_gpu[i].result[j].id != results_cpu[i].result[j].id
+                || results_gpu[i].result[j].dist != results_cpu[i].result[j].dist) {
                 mismatch_found = true;
             }
         }
@@ -104,6 +119,8 @@ int main() {
 
     if (!mismatch_found) {
         cout << "Results are the same" << endl;
+    } else {
+        cout << "Results are different" << endl;
     }
     return 0;
 }

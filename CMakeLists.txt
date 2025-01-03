@@ -1,6 +1,8 @@
 # Set global preprocessor definition
 add_compile_definitions(VEC_DIM=128)
 add_compile_definitions(MAX_HEAP_SIZE=1024)
+add_compile_definitions(DATASET_SIZE=10000)
+add_compile_definitions(K=32)
 
 # Rest of the CMake configuration
 cmake_minimum_required(VERSION 3.18)

@@ -149,10 +149,10 @@ namespace utils {
         where you have consecutive values in the following format
         vector0_size/vec0(0)/vec0(1)/vec0(2)/.../vec0(vec_size-1)/vector1_size/vec1(0) ...
         where each value is an int (4 bytes)
-        in the case of ground truth, the vectorX_size is the K of the ANNS procedure
+        in the case of ground truth, the vectorX_size is the k of the ANNS procedure
         and each value is the index inside the original dataset of the KNN of the queryX
     */
-    vector<Neighbors> load_ivec(const string& neighbor_path, int n, int K) {
+    vector<Neighbors> load_ivec(const string& neighbor_path, int n, int k) {
         ifstream ifs(neighbor_path, ios::binary); // Open in binary mode
         if (!ifs) throw runtime_error("Can't open file: " + neighbor_path);
 
@@ -162,8 +162,8 @@ namespace utils {
         for (int i = 0; i < n; ++i) {
             int head_id = i;
             // cout << head_id << ": ";
-            // Read K elements for each head_id
-            for (int j = 0; j < K; ++j) {
+            // Read k elements for each head_id
+            for (int j = 0; j < k; ++j) {
                 int neigh;
                 ifs.read(reinterpret_cast<char*>(&neigh), sizeof(int)); // Read tail_id
 
