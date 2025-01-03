@@ -14,6 +14,7 @@ using namespace ds;
 #define K 32
 #define VEC_DIM 128
 #define DATASET_SIZE 10000
+#define maxk 100
 
 template <typename T = float>
 __global__ void search_layer_kernel(
@@ -113,8 +114,14 @@ __global__ void search_layer_kernel(
                     topk.get_size() < *ef) {
                     
                     q.insert({shared_distances[i], neighbor_id});
-                    topk.insert({shared_distances[i], neighbor_id});
 
+                    // Bound the size of candidates PQ by maxk
+                    if (q.get_size() > maxk) {
+                        q.pop(); // Remove the element with the lowest priority
+                    }
+
+
+                    topk.insert({shared_distances[i], neighbor_id});
                     if (topk.get_size() > *ef) {
                         topk.pop();
                     }
@@ -134,5 +141,6 @@ __global__ void search_layer_kernel(
         }
     }
 }
+
 
 #endif // HNSW_SEARCH_LAYER_CUH
