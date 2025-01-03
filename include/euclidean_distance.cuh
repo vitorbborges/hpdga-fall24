@@ -59,7 +59,7 @@ T euclidean_distance_cpu(const T *vec1, const T *vec2, int dimensions) {
 // Optimized GPU function for computing Euclidean distance with shared memory
 // and warp-level reductions
 template <typename T>
-__inline__ __device__ T euclidean_opt(const T *vec1, const T *vec2,
+__inline__ __device__ T euclidean_distance_gpu(const T *vec1, const T *vec2,
                                       const int dimensions, const int vec_idx) {
   __shared__ T shared[32];     // Shared memory for partial sums
   int warp = threadIdx.x / 32; // Warp index
@@ -164,7 +164,7 @@ __global__ void batch_gpu(const float *vec1, const float *vec2,
   if (vec_idx >= num_vectors)
     return;
 
-  float distance = euclidean_opt(vec1, vec2, dimensions, vec_idx);
+  float distance = euclidean_distance_gpu(vec1, vec2, dimensions, vec_idx);
 
   if (threadIdx.x == 0) {
     distances[vec_idx] = distance;
