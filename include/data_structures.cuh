@@ -2,6 +2,10 @@
 #define HNSW_DATA_STRUCTURES_CUH
 
 #include <vector>
+#include <string>
+#include <stdexcept>
+#include <fstream>
+#include <iostream>
 
 using namespace std;
 

@@ -40,7 +40,7 @@ namespace utils {
         result = std::sqrt(result);
         return result;
     }
-
+        
     Dataset<float> fvecs_read(const std::string& filename, int size) {
         std::ifstream file(filename, std::ios::binary);
 
@@ -59,7 +59,7 @@ namespace utils {
         int bmax = file.tellg() / vecsizeof;
         int b = bmax;
 
-        b=size;
+        b = size;
 
         assert(a >= 1);
         if (b > bmax) {
@@ -81,12 +81,12 @@ namespace utils {
         // Reshape the vectors
         Dataset<float> dataset;
         for (int i = 0; i < n; ++i) {
-            float values[d];  // Create a local array
+            std::vector<float> values(d);  // Use std::vector for dynamic size
             for (int j = 0; j < d; ++j) {
                 values[j] = buffer[i * (d + 1) + j + 1]; // Start from 1 to skip the dimension value
             }
-            // Pass the array pointer to the Data constructor
-            dataset.push_back(Data<float>(a + i - 1, values, d)); // Index starts from 0
+            // Pass the vector pointer to the Data constructor
+            dataset.push_back(Data<float>(a + i - 1, values.data(), d)); // Index starts from 0
         }
 
         file.close();
