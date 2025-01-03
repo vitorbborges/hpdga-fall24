@@ -101,21 +101,26 @@ int main() {
 
     // Check if results are the same using precomputed CPU results
     bool mismatch_found = false;
+    int count = 0;
     for (size_t i = 0; i < test_n_query; i++) {
         for (size_t j = 0; j < test_ef; j++) {
             if (results_gpu[i].result[j].id != results_cpu[i].result[j].id
                 || results_gpu[i].result[j].dist != results_cpu[i].result[j].dist) {
-                cout << "Mismatch found at query_id: " << i << " resuslt_id: " << j << endl;
-                cout << "GPU: " << results_gpu[i].result[j].id << " " << results_gpu[i].result[j].dist << endl;
-                cout << "CPU: " << results_cpu[i].result[j].id << " " << results_cpu[i].result[j].dist << endl;
-                cout << "--------------------------------" << endl;
+                // cout << "Mismatch found at query_id: " << i << " resuslt_id: " << j << endl;
+                // cout << "GPU: " << results_gpu[i].result[j].id << " " << results_gpu[i].result[j].dist << endl;
+                // cout << "CPU: " << results_cpu[i].result[j].id << " " << results_cpu[i].result[j].dist << endl;
+                // cout << "--------------------------------" << endl;
                 mismatch_found = true;
+                count++;
             }
         }
     }
 
     if (!mismatch_found) {
         cout << "Results are the same" << endl;
+    }
+    else {
+        cout << "mismatched count: " << count << endl;
     }
 
     cout << "time for " << REPETITIONS * n_query

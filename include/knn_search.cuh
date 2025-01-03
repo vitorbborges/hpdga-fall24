@@ -216,8 +216,8 @@ SearchResults knn_search(
             d_adjacency_list
         );
         
-        // Launch kernel
-        search_layer_kernel<<<queries.size(), VEC_DIM>>>(
+        size_t shared_memory_size = (maxk + MAX_HEAP_SIZE) * sizeof(d_Neighbor<float>);
+        search_layer_kernel<<<queries.size(), VEC_DIM, shared_memory_size>>>(
             d_queries,
             d_current_start_ids,
             d_adjacency_list,
@@ -225,6 +225,7 @@ SearchResults knn_search(
             d_current_ef,
             d_current_result
         );
+
 
         // Fetch layer results
         fetch_layer_results(
