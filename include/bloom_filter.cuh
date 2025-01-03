@@ -15,7 +15,6 @@ struct SharedBloomFilter {
         for (int i = 0; i < NUM_WORDS; ++i) {
             data[i] = 0; // Initialize all bits to 0
         }
-        printf("Bloom Filter initialized with %d bits\n", NUM_BITS);
     }
 
     // First hash function

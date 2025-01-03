@@ -4,20 +4,12 @@
 #include <cuda_runtime.h>
 #include "search_layer.cuh"
 
-#define CHECK_CUDA_CALL(call)                                                                \
-    do {                                                                                     \
-        cudaError_t err = call;                                                              \
-        if (err != cudaSuccess) {                                                            \
-            std::cerr << "CUDA error at " << __FILE__ << ":" << __LINE__ << ": "             \
-                      << cudaGetErrorString(err) << std::endl;                               \
-            exit(EXIT_FAILURE);                                                              \
-        }                                                                                    \
-    } while (0)
-
 template <typename T = float>
 void copy_constant_values(
     const Dataset<T>& queries,
     T*& d_queries,
+    const int& start_node_id,
+    d_Neighbor<T>* d_start_ids,
     T* d_dataset,
     const Dataset<float>& dataset,
     const size_t& ds_size,
@@ -26,11 +18,19 @@ void copy_constant_values(
     int* d_layer_ef,
     const size_t& one
 ) {
-
     // copy queries to device
+    std::vector<T> queries_host(queries.size() * VEC_DIM);
     for (size_t i = 0; i < queries.size(); i++) {
-        cudaMemcpy(d_queries + i * VEC_DIM, queries[i].data(), VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+        std::copy(queries[i].data(), queries[i].data() + VEC_DIM, queries_host.data() + i * VEC_DIM);
     }
+    cudaMemcpy(d_queries, queries_host.data(), queries.size() * VEC_DIM * sizeof(T), cudaMemcpyHostToDevice);
+
+    // Copy start ids to device
+    d_Neighbor<T> start_ids[queries.size()];
+    for (size_t i = 0; i < queries.size(); i++) {
+        start_ids[i] = {0.0f, start_node_id};
+    }
+    cudaMemcpy(d_start_ids, start_ids, queries.size() * sizeof(d_Neighbor<T>), cudaMemcpyHostToDevice);
 
     // Copy dataset to device
     std::vector<T> dataset_host(ds_size * VEC_DIM);
@@ -44,31 +44,34 @@ void copy_constant_values(
 
     // copy layer ef to device
     cudaMemcpy(d_layer_ef, &one, sizeof(int), cudaMemcpyHostToDevice);
-    
 }
 
 void copy_layer_values(
-    const int* start_ids,
-    const size_t& queries_size,
-    int* d_start_ids,
-    const std::vector<Layer>& layers,
-    const int& l_c,
+    const Layer& layer,
+    const std::vector<int>& layer_map,
     const size_t& ds_size,
+    std::vector<int>& adjacency_host,
     int* d_adjacency_list
 ) {
-
-    // copy start ids array to device
-    cudaMemcpy(d_start_ids, start_ids, queries_size * sizeof(int), cudaMemcpyHostToDevice);
-
     // Copy adjacency list to device
-    std::vector<int> adjacency_host(ds_size * K, -1);
-    for (Node node : layers[l_c]) {
-        int offset = node.data.id() * K;
+    for (const int& node_id : layer_map) {
+        const Node& node = layer[node_id];
         for (size_t i = 0; i < node.neighbors.size(); i++) {
-            adjacency_host[offset + i] = node.neighbors[i].id;
+            adjacency_host[node.data.id() * K + i] = node.neighbors[i].id;
         }
     }
     cudaMemcpy(d_adjacency_list, adjacency_host.data(), ds_size * K * sizeof(int), cudaMemcpyHostToDevice);
+}
+
+template <typename T = float>
+void fetch_layer_results(
+    d_Neighbor<T>* d_layer_result,
+    d_Neighbor<T>* layer_result,
+    const int& ef,
+    const size_t& queries_size
+) {
+    // Fetch layer results concurrently
+    cudaMemcpy(layer_result, d_layer_result, ef * queries_size * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
 }
 
 template <typename T = float>
@@ -90,15 +93,30 @@ SearchResults prepare_output(
     return search_results;
 }
 
+__global__ void warmup_kernel() {}
+
+void warmup(cudaStream_t stream) {
+    warmup_kernel<<<1, 1, 0, stream>>>();
+    cudaDeviceSynchronize(); // Ensure everything is initialized
+}
+
 template <typename T = float>
 SearchResults knn_search(
     const Dataset<T>& queries,
     const int& start_node_id,
     const int& ef,
     const std::vector<Layer>& layers,
+    const std::map<int, std::vector<int>>& layer_map,
     const size_t& ds_size,
-    const Dataset<float>& dataset
+    const Dataset<float>& dataset,
+    std::chrono::system_clock::time_point& q_start,
+    std::chrono::system_clock::time_point& q_end
 ) {
+    // Warmup Kernel
+    cudaStream_t warmupStream;
+    cudaStreamCreate(&warmupStream);
+    warmup(warmupStream);
+
     // CONSTANT ALLOCATIONS
 
     // Allocate query on device
@@ -118,21 +136,18 @@ SearchResults knn_search(
     cudaMalloc(&d_layer_ef, sizeof(int));
     int one = 1;
 
+    // Allocate initial search id of each query on device
+    d_Neighbor<T>* d_start_ids;
+    cudaMalloc(&d_start_ids, queries.size() * sizeof(d_Neighbor<T>));
+
     //////////////////////////////////////////////////////////////////////////////
 
     // LAYER-SPECIFIC ALLOCATIONS
 
-    // Allocate initial search id of each query on device
-    int* d_start_ids;
-    cudaMalloc(&d_start_ids, queries.size() * sizeof(int));
-
-    // Initialize start ids array to start_node_id
-    int start_ids[queries.size()];
-    std::fill(start_ids, start_ids + queries.size(), start_node_id);
-
     // Allocate fixed degree graph adjency list on device
     int* d_adjacency_list;
     cudaMalloc(&d_adjacency_list, ds_size * K * sizeof(int));
+    std::vector<int> adjacency_host(ds_size * K, -1);
 
     // Allocate layer search result on device
     d_Neighbor<T> layer_result[queries.size()];
@@ -146,10 +161,14 @@ SearchResults knn_search(
 
     //////////////////////////////////////////////////////////////////////////////
 
+    q_start = std::chrono::system_clock::now();
+
     // COPY VALUES THAT WILL NOT CHANGE ON LAYER INTERATION
     copy_constant_values(
         queries,
         d_queries,
+        start_node_id,
+        d_start_ids,
         d_dataset,
         dataset,
         ds_size,
@@ -163,12 +182,19 @@ SearchResults knn_search(
     for (int l_c = layers.size() - 1; l_c >= 0; l_c--) {
 
         // Initialize current layer parameters
+        d_Neighbor<T>* d_current_start_ids;
         int* d_current_ef;
         int current_ef;
         d_Neighbor<T>* d_current_result;
         d_Neighbor<T>* current_result;
 
         // Set current layer parameters
+        if (l_c == layers.size() - 1) { // if on first layer
+            d_current_start_ids = d_start_ids;
+        } else { // use previous layer's result as start_ids
+            d_current_start_ids = d_layer_result;
+        }
+
         if (l_c > 0) { // if on upper layers
             d_current_ef = d_layer_ef;
             current_ef = one;
@@ -183,19 +209,17 @@ SearchResults knn_search(
         
         // copy layer-specific data to device memory
         copy_layer_values(
-            start_ids,
-            queries.size(),
-            d_start_ids,
-            layers,
-            l_c,
+            layers[l_c],
+            layer_map.at(l_c),
             ds_size,
+            adjacency_host,
             d_adjacency_list
         );
         
         // Launch kernel
         search_layer_kernel<<<queries.size(), VEC_DIM>>>(
             d_queries,
-            d_start_ids,
+            d_current_start_ids,
             d_adjacency_list,
             d_dataset,
             d_current_ef,
@@ -203,15 +227,15 @@ SearchResults knn_search(
         );
 
         // Fetch layer results
-        cudaMemcpy(current_result, d_current_result, current_ef * queries.size() * sizeof(d_Neighbor<T>), cudaMemcpyDeviceToHost);
-
-        if (l_c == 0) break;
-
-        // Update start_ids for next layer
-        for (size_t i = 0; i < current_ef * queries.size(); i++) {
-            start_ids[i] = current_result[i].id;
-        }
+        fetch_layer_results(
+            d_current_result,
+            current_result,
+            current_ef,
+            queries.size()
+        );
     }
+
+    q_end = std::chrono::system_clock::now();
 
     // Free memory
     cudaFree(d_start_ids);
