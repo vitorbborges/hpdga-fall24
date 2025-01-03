@@ -1,3 +1,8 @@
+# Set global preprocessor definition
+add_compile_definitions(VEC_DIM=128)
+add_compile_definitions(MAX_HEAP_SIZE=1024)
+
+# Rest of the CMake configuration
 cmake_minimum_required(VERSION 3.18)
 
 # Project name and enable CUDA
