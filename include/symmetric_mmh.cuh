@@ -96,30 +96,13 @@ private:
 public:
   // Constructor initializes heap in shared memory
   __device__ SymmetricMinMaxHeap(d_Neighbor<T> *sharedHeap,
-                                 HeapType type,
-                                 int maximumSize = 1) {
-    heap = sharedHeap;
-    size = 1; // Start size at 1 for consistent indexing
-    type = type;
-    capacity = maximumSize;
-  }
+                                  HeapType type) : 
+                                  heap(sharedHeap),
+                                  size(1),
+                                  type(type) {}
 
   // Inserts a new element into the heap
   __device__ void insert(d_Neighbor<T> value) {
-    if (getSize() >= capacity) { // Handle capacity limit
-      d_Neighbor<T> insertValue;
-      d_Neighbor<T> bott = bottom();
-      if (type == MIN_HEAP) {
-        popMax(); // Remove max for MIN_HEAP
-        insertValue = (value.dist < bott.dist) ? value : bott;
-      } else {
-        popMin(); // Remove min for MAX_HEAP
-        insertValue = (value.dist > bott.dist) ? value : bott;
-      }
-      insert(insertValue);
-      return;
-    }
-
     int Y = size;
     heap[size++] = value;
 
@@ -186,8 +169,10 @@ public:
   __device__ d_Neighbor<T> top() const {
     if (type == MIN_HEAP) {
       return heap[1];
-    } else {
+    } else if (getSize() > 1) {
       return heap[2];
+    } else {
+      return heap[1];
     }
   }
 
@@ -208,6 +193,15 @@ public:
         return popMin();
         } else {
         return popMax();
+        }
+    }
+
+    // Pops the bottom element according to heap type
+    __device__ d_Neighbor<T> popBottom() {
+        if (type == MIN_HEAP) {
+        return popMax();
+        } else {
+        return popMin();
         }
     }
 };

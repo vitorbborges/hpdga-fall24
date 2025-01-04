@@ -37,13 +37,13 @@ __global__ void search_layer_kernel(
     visited->init();
 
     d_Neighbor<T>* candidates_array = (d_Neighbor<T>*)&visited[1];
-    SymmetricMinMaxHeap<T> q(candidates_array, MIN_HEAP, *ef);
+    SymmetricMinMaxHeap<T> q(candidates_array, MIN_HEAP);
 
-    d_Neighbor<T>* top_candidates_array = (d_Neighbor<T>*)&candidates_array[*ef + 1];
-    SymmetricMinMaxHeap<T> topk(top_candidates_array, MAX_HEAP, *ef);
+    d_Neighbor<T>* top_candidates_array = (d_Neighbor<T>*)&candidates_array[*ef + 2];
+    SymmetricMinMaxHeap<T> topk(top_candidates_array, MAX_HEAP);
 
     // calculate distance from start node to query and add to queue
-    T* computation_mem_area = (T*)&top_candidates_array[*ef + 1];
+    T* computation_mem_area = (T*)&top_candidates_array[*ef + 2];
     T start_dist = euclidean_distance_gpu<T>(
         shared_query,
         dataset + start_node_id * VEC_DIM,
@@ -71,6 +71,7 @@ __global__ void search_layer_kernel(
         d_Neighbor<T>* now = (d_Neighbor<T>*)&exit[1];
         if (tidx == 0) {
             *now = q.pop();
+            printf("now: %d, dist: %f\n", now->id, now->dist);
         }
         __syncthreads();
 
@@ -113,16 +114,26 @@ __global__ void search_layer_kernel(
         }
         __syncthreads();
 
+
         if (tidx == 0) {
             for (size_t i = 0; i < n_neighbors; i++) {
                 int neighbor_id = neighbors_ids[i];
-                printf("neighbor_id: %d\n", neighbor_id);
+                printf("neighbor_id: %d, shared_dist: %f\n", neighbor_id, shared_distances[i]);
                 if (visited->test(neighbor_id)) continue;
                 visited->set(neighbor_id);
 
-                q.insert({shared_distances[i], neighbor_id});
+                if (shared_distances[i] < topk.top().dist) {
+                    q.insert({shared_distances[i], neighbor_id});
+                    if (q.getSize() > *ef) {
+                        q.popBottom();
+                    }
+                    topk.insert({shared_distances[i], neighbor_id});
+                    if (neighbor_id == 6200) topk.print();
+                    if (topk.getSize() > *ef) {
+                        topk.pop();
+                    }
+                }
                 
-                topk.insert({shared_distances[i], neighbor_id});
                 printf("q: ");
                 q.print();
                 printf("topk: ");
@@ -133,8 +144,9 @@ __global__ void search_layer_kernel(
 
     // get results
     if (tidx == 0) {
+        topk.print();
         for (size_t i = 0; i < *ef; i++) {
-            result[blockIdx.x * (*ef) + i] = topk.pop();
+            result[blockIdx.x * (*ef) + i] = topk.popMin();
         }
     }
 
@@ -175,11 +187,11 @@ size_t computeSharedMemoryBytesHost(int ef)
 
     // 3) candidates_array
     offset = alignUp(offset, alignof(d_Neighbor<T>));
-    offset += (ef + 1) * sizeof(d_Neighbor<T>);
+    offset += (ef + 2) * sizeof(d_Neighbor<T>);
 
     // 4) top_candidates_array
     offset = alignUp(offset, alignof(d_Neighbor<T>));
-    offset += (ef + 1) * sizeof(d_Neighbor<T>);
+    offset += (ef + 2) * sizeof(d_Neighbor<T>);
 
     // 5) now
     offset = alignUp(offset, alignof(d_Neighbor<T>));
@@ -192,6 +204,10 @@ size_t computeSharedMemoryBytesHost(int ef)
     // 7) exit_flag
     offset = alignUp(offset, alignof(int));
     offset += sizeof(int);
+
+    // 8) shared_distances
+    offset = alignUp(offset, alignof(T));
+    offset += K * sizeof(T);
 
     return offset;
 }
