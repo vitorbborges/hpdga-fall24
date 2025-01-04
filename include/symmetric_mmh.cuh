@@ -1,177 +1,206 @@
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
-#include <cstdio>
+#ifndef HNSW_SYMMETRIC_MMH_CUH
+#define HNSW_SYMMETRIC_MMH_CUH
 
 #include "data_structures.cuh"
+#include <cstdio>
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
 
 using namespace ds;
 
-#define HEAP_SIZE 128  
+enum HeapType { MIN_HEAP, MAX_HEAP }; // Defines heap type
 
-template <typename T>
-struct SymmetricMinMaxHeap {
-    d_Neighbor<T>* heap;  
-    int* size;            
+template <typename T> class SymmetricMinMaxHeap {
+private:
+  d_Neighbor<T> *heap; // Shared memory array for the heap
+  int size;            // Current number of elements in the heap
+  HeapType type;       // Type of heap: MIN_HEAP or MAX_HEAP
+  size_t capacity;     // Maximum allowed size of the heap
 
-    __device__ void init(d_Neighbor<T>* sharedHeap, int* sharedSize) {
-        heap = sharedHeap;  
-        size = sharedSize;  // Assign shared memory to size
-        *size = 0;          // Initialize heap size
+  __device__ int parent(int x) const { return ((x - 1) >> 1); }
+  __device__ int grandparent(int x) const { return ((x - 3) >> 2); }
+  __device__ int leftChild(int x) const { return ((x << 1) + 1); }
+  __device__ int rightChild(int x) const { return ((x << 1) + 2); }
+  __device__ bool isLeaf(unsigned int x) const { return leftChild(x) >= size; }
+
+  // Swaps two heap elements at given indices
+  __device__ void swap(int idx1, int idx2) {
+    d_Neighbor<T> temp = heap[idx1];
+    heap[idx1] = heap[idx2];
+    heap[idx2] = temp;
+  }
+
+  // Adjusts sibling nodes to maintain order
+  __device__ int adjustSibling(int idx) {
+    int s;
+    if (idx & 1) { // Left child case
+      s = idx + 1;
+      if (s >= size)
+        return idx; // No sibling
+      if (heap[idx].dist > heap[s].dist) {
+        swap(idx, s);
+        return s;
+      }
+    } else { // Right child case
+      s = idx - 1;
+      if (heap[idx].dist < heap[s].dist) {
+        swap(idx, s);
+        return s;
+      }
+    }
+    return idx;
+  }
+
+  // Adjusts based on grandparent relationships for heap property
+  __device__ int adjustGrandparent(int idx) {
+    if (idx <= 2)
+      return idx; // Root level, no grandparent
+    int G = grandparent(idx);
+    int GL = leftChild(G), GR = rightChild(G);
+    if (heap[GL].dist > heap[idx].dist) {
+      swap(GL, idx);
+      return GL;
+    } else if (heap[GR].dist < heap[idx].dist) {
+      swap(GR, idx);
+      return GR;
+    }
+    return idx;
+  }
+
+  // Adjusts grandchild nodes to maintain heap order
+  __device__ int adjustGrandchild(int idx) {
+    if (idx & 1) { // Left child case
+      if (isLeaf(idx))
+        return idx;
+      int CL = leftChild(idx), CR = leftChild(idx + 1);
+      int C = CL;
+      if (CR < size && heap[CR].dist < heap[CL].dist)
+        C = CR;
+      if (heap[C].dist < heap[idx].dist) {
+        swap(C, idx);
+        return C;
+      }
+    } else { // Right child case
+      int CL = rightChild(idx - 1), CR = rightChild(idx);
+      if (CL >= size)
+        return idx; // No children
+      int C = CL;
+      if (CR < size && heap[CR].dist > heap[CL].dist)
+        C = CR;
+      if (heap[C].dist > heap[idx].dist) {
+        swap(C, idx);
+        return C;
+      }
+    }
+    return idx;
+  }
+
+public:
+  // Constructor initializes heap in shared memory
+  __device__ SymmetricMinMaxHeap(d_Neighbor<T> *sharedHeap,
+                                 HeapType type = MIN_HEAP,
+                                 int maximumSize = 1) {
+    heap = sharedHeap;
+    size = 1; // Start size at 1 for consistent indexing
+    type = type;
+    capacity = maximumSize;
+  }
+
+  // Inserts a new element into the heap
+  __device__ void insert(d_Neighbor<T> value) {
+    if (getSize() >= capacity) { // Handle capacity limit
+      d_Neighbor<T> insertValue;
+      d_Neighbor<T> bott = bottom();
+      if (type == MIN_HEAP) {
+        popMax(); // Remove max for MIN_HEAP
+        insertValue = (value.dist < bott.dist) ? value : bott;
+      } else {
+        popMin(); // Remove min for MAX_HEAP
+        insertValue = (value.dist > bott.dist) ? value : bott;
+      }
+      insert(insertValue);
+      return;
     }
 
-    // Get parent and child indices
-    __device__ int parent(int idx) { return (idx - 1) / 2; }
-    __device__ int leftChild(int idx) { return 2 * idx + 1; }
-    __device__ int rightChild(int idx) { return 2 * idx + 2; }
+    int Y = size;
+    heap[size++] = value;
 
-    // Check if a level is min or max
-    __device__ bool isMinLevel(int idx) { return __ffs(idx + 1) % 2 == 1; }
-
-    // Insert an element into the heap
-    __device__ void insert(d_Neighbor<T> value) {
-        int idx = atomicAdd(size, 1);  // Get the next available position atomically
-        if (idx >= HEAP_SIZE) {
-            printf("Heap overflow!\n");
-            atomicSub(size, 1);  // Revert the size increment
-            return;
-        }
-
-        heap[idx] = value;  // Place the element
-        heapifyUp(idx);     // Reheapify up
+    // Adjust heap properties iteratively
+    while (true) {
+      Y = adjustSibling(Y);
+      int X = adjustGrandparent(Y);
+      if (X == Y)
+        break; // Stop when no adjustments needed
+      Y = X;
     }
+  }
 
-    // Heapify up to maintain the heap property
-    __device__ void heapifyUp(int idx) {
-        if (idx == 0) return;  // Root node, no parent
-
-        int p = parent(idx);
-        if (isMinLevel(idx)) {
-            if (heap[idx].dist > heap[p].dist) {
-                swap(idx, p);
-                heapifyUpMax(p);
-            } else {
-                heapifyUpMin(idx);
-            }
-        } else {
-            if (heap[idx].dist < heap[p].dist) {
-                swap(idx, p);
-                heapifyUpMin(p);
-            } else {
-                heapifyUpMax(idx);
-            }
-        }
+  // Removes the element at a specified index
+  __device__ void deletion(int idx) {
+    heap[idx] = heap[--size]; // Replace with last element
+    int Y = idx;
+    while (true) {
+      Y = adjustSibling(Y);
+      int X = adjustGrandchild(Y);
+      if (X == Y)
+        break; // Stop when no adjustments needed
+      Y = X;
     }
+  }
 
-    __device__ void heapifyUpMin(int idx) {
-        int gp = parent(parent(idx));
-        if (idx > 2 && heap[idx].dist < heap[gp].dist) {
-            swap(idx, gp);
-            heapifyUpMin(gp);
-        }
+  // Removes and returns the smallest element
+  __device__ d_Neighbor<T> popMin() {
+    if (size == 1) {
+      return d_Neighbor<T>(); // Empty heap case
     }
+    d_Neighbor<T> ret = heap[1];
+    deletion(1);
+    return ret;
+  }
 
-    __device__ void heapifyUpMax(int idx) {
-        int gp = parent(parent(idx));
-        if (idx > 2 && heap[idx].dist > heap[gp].dist) {
-            swap(idx, gp);
-            heapifyUpMax(gp);
-        }
+  // Removes and returns the largest element
+  __device__ d_Neighbor<T> popMax() {
+    if (size <= 1)
+      return popMin(); // Fallback to popMin for single element
+
+    d_Neighbor<T> ret = heap[2];
+    deletion(2);
+    return ret;
+  }
+
+  // Prints the heap contents (for debugging)
+  __device__ void print() {
+    printf("Heap (size = %d):\n", getSize());
+    for (int i = 0; i < size - 1; ++i) {
+      printf("Index %d: dist = %.2f, id = %d\n", i, heap[i + 1].dist,
+             heap[i + 1].id);
     }
+    printf("\n");
+  }
 
-    __device__ d_Neighbor<T> popMin() {
-        if (*size == 0) {
-            printf("Heap underflow!\n");
-            return d_Neighbor<T>();  // Return default value
-        }
+  // Returns the number of elements in the heap
+  __device__ int getSize() const { return size - 1; }
 
-        d_Neighbor<T> minVal = heap[0];
-        heap[0] = heap[--(*size)];  // Replace root with last element
-        heapifyDown(0);            // Reheapify down
-        return minVal;
+  // Checks if the heap is empty
+  __device__ bool isEmpty() const { return size == 1; }
+
+  // Returns the top (smallest or largest) element
+  __device__ d_Neighbor<T> top() const {
+    if (type == MIN_HEAP) {
+      return heap[1];
+    } else {
+      return heap[2];
     }
+  }
 
-    __device__ d_Neighbor<T> popMax() {
-        if (*size <= 1) {
-            return popMin();  // If only one element, popMin is equivalent
-        }
-
-        int maxIdx = (*size == 2 || heap[1].dist > heap[2].dist) ? 1 : 2;
-        d_Neighbor<T> maxVal = heap[maxIdx];
-        heap[maxIdx] = heap[--(*size)];  // Replace max with last element
-        heapifyDown(maxIdx);            // Reheapify down
-        return maxVal;
+  // Returns the bottom element
+  __device__ d_Neighbor<T> bottom() const {
+    if (type == MIN_HEAP && getSize() > 1) {
+      return heap[2];
+    } else {
+      return heap[1];
     }
-
-    // Heapify down to maintain the heap property
-    __device__ void heapifyDown(int idx) {
-        if (isMinLevel(idx)) {
-            heapifyDownMin(idx);
-        } else {
-            heapifyDownMax(idx);
-        }
-    }
-
-    __device__ void heapifyDownMin(int idx) {
-        int left = leftChild(idx), right = rightChild(idx);
-        if (left >= *size) return;
-
-        int smallest = left;
-        if (right < *size && heap[right].dist < heap[left].dist) {
-            smallest = right;
-        }
-
-        if (heap[idx].dist > heap[smallest].dist) {
-            swap(idx, smallest);
-            if (leftChild(smallest) < *size) {
-                int l = leftChild(smallest), r = rightChild(smallest);
-                int gSmallest = l;
-                if (r < *size && heap[r].dist < heap[l].dist) {
-                    gSmallest = r;
-                }
-                if (heap[smallest].dist > heap[gSmallest].dist) {
-                    swap(smallest, gSmallest);
-                    heapifyDownMin(gSmallest);
-                }
-            }
-        }
-    }
-
-    __device__ void heapifyDownMax(int idx) {
-        int left = leftChild(idx), right = rightChild(idx);
-        if (left >= *size) return;
-
-        int largest = left;
-        if (right < *size && heap[right].dist > heap[left].dist) {
-            largest = right;
-        }
-
-        if (heap[idx].dist < heap[largest].dist) {
-            swap(idx, largest);
-            if (leftChild(largest) < *size) {
-                int l = leftChild(largest), r = rightChild(largest);
-                int gLargest = l;
-                if (r < *size && heap[r].dist > heap[l].dist) {
-                    gLargest = r;
-                }
-                if (heap[largest].dist < heap[gLargest].dist) {
-                    swap(largest, gLargest);
-                    heapifyDownMax(gLargest);
-                }
-            }
-        }
-    }
-
-    __device__ void swap(int idx1, int idx2) {
-        d_Neighbor<T> temp = heap[idx1];
-        heap[idx1] = heap[idx2];
-        heap[idx2] = temp;
-    }
-
-    __device__ void print() {
-        printf("Heap (size = %d):\n", *size);
-        for (int i = 0; i < *size; ++i) {
-            printf("Index %d: dist = %.2f, id = %d\n", i, heap[i].dist, heap[i].id);
-        }
-        printf("\n");
-    }
+  }
 };
+
+#endif // HNSW_SYMMETRIC_MMH_CUH
