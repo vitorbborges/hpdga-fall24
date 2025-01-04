@@ -8,8 +8,6 @@
 
 using namespace ds;
 
-enum HeapType { MIN_HEAP, MAX_HEAP }; // Defines heap type
-
 template <typename T> class SymmetricMinMaxHeap {
 private:
   d_Neighbor<T> *heap; // Shared memory array for the heap
@@ -197,10 +195,21 @@ public:
   __device__ d_Neighbor<T> bottom() const {
     if (type == MIN_HEAP && getSize() > 1) {
       return heap[2];
+    } else if (getSize() > 1) {
+      return heap[1];
     } else {
       return heap[1];
     }
   }
+
+  // Pops the top element according to heap type
+    __device__ d_Neighbor<T> pop() {
+        if (type == MIN_HEAP) {
+        return popMin();
+        } else {
+        return popMax();
+        }
+    }
 };
 
 #endif // HNSW_SYMMETRIC_MMH_CUH

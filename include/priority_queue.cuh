@@ -9,9 +9,6 @@
 
 using namespace ds;
 
-// Define an enum for heap type
-enum HeapType { MIN_HEAP, MAX_HEAP };
-
 template <typename T = float> class PriorityQueue {
 private:
   d_Neighbor<T> *heap; // Pointer to the heap array in shared memory

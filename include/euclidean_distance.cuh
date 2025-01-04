@@ -60,8 +60,8 @@ T euclidean_distance_cpu(const T *vec1, const T *vec2, int dimensions) {
 // and warp-level reductions
 template <typename T>
 __inline__ __device__ T euclidean_distance_gpu(const T *vec1, const T *vec2,
-                                      const int dimensions) {
-  __shared__ T shared[32];     // Shared memory for partial sums
+                                      const int dimensions, T *shared) {
+  if (threadIdx.x >= dimensions) return 0.0f;
   int warp = threadIdx.x / 32; // Warp index
   int lane = threadIdx.x % 32; // Lane index within the warp
   T val = 0;
@@ -73,7 +73,7 @@ __inline__ __device__ T euclidean_distance_gpu(const T *vec1, const T *vec2,
   }
 
   // Perform warp-level reduction
-  val = warp_reduce_sum(val);
+  val = warpReduceSum(val);
 
   // Write partial warp sums to shared memory
   if (lane == 0) {
@@ -84,7 +84,7 @@ __inline__ __device__ T euclidean_distance_gpu(const T *vec1, const T *vec2,
   // Perform block-level reduction using shared memory
   if (warp == 0) {
     val = (threadIdx.x < blockDim.x / 32) ? shared[lane] : 0.0f;
-    val = warp_reduce_sum(val);
+    val = warpReduceSum(val);
     if (threadIdx.x == 0) {
       shared[0] = val; // Store final result in shared memory
     }

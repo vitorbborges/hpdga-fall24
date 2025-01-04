@@ -3,7 +3,8 @@
 
 #include <cuda_runtime.h>
 #include "priority_queue.cuh"
-
+#include "symmetric_mmh.cuh"
+#include "bloom_filter.cuh"
 #include "euclidean_distance.cuh"
 #include "data_structures.cuh"
 #include "utils.cuh"
@@ -25,78 +26,91 @@ __global__ void search_layer_kernel(
     T* query = queries + bidx * VEC_DIM;
     int start_node_id = start_ids[bidx].id;
 
+    extern __shared__ T sharedMemory[];
 
-    // Shared memory for query data
-    static __shared__ T shared_query[VEC_DIM];
-    if (tidx < VEC_DIM) {
-        shared_query[tidx] = query[tidx];
+    T* shared_query = sharedMemory;
+    for (size_t i = 0; i < VEC_DIM; i++) {
+        shared_query[i] = query[i];
     }
 
-    // Priority queues initialization
-    __shared__ d_Neighbor<T> candidates_array[MAX_HEAP_SIZE];
-    __shared__ int candidates_size;
-    candidates_size = 0;
-    PriorityQueue<T> q(candidates_array, &candidates_size, MIN_HEAP);
+    SharedBloomFilter visited;
+    visited.init();
 
-    __shared__ d_Neighbor<T> top_candidates_array[MAX_HEAP_SIZE];
-    __shared__ int top_candidates_size;
-    top_candidates_size = 0;
-    PriorityQueue<T> topk(top_candidates_array, &top_candidates_size, MAX_HEAP);
+    d_Neighbor<T>* candidates_array = (d_Neighbor<T>*)&shared_query[VEC_DIM];
+    SymmetricMinMaxHeap<T> q(candidates_array, MIN_HEAP, *ef);
+
+    d_Neighbor<T>* top_candidates_array = (d_Neighbor<T>*)&candidates_array[*ef + 1];
+    SymmetricMinMaxHeap<T> topk(top_candidates_array, MAX_HEAP, *ef);
 
     // calculate distance from start node to query and add to queue
+    T* computation_mem_area = (T*)&top_candidates_array[*ef + 1];
     T start_dist = euclidean_distance_gpu<T>(
         shared_query,
         dataset + start_node_id * VEC_DIM,
-        VEC_DIM
+        VEC_DIM,
+        computation_mem_area
     );
 
     if (tidx == 0) {
         q.insert({start_dist, start_node_id});
         topk.insert({start_dist, start_node_id});
+        // visited.set(start_node_id);
     }
     __syncthreads();
 
-    // Shared memory for visited nodes
-    bool shared_visited[DATASET_SIZE];
-    if (tidx == 0) {
-        shared_visited[start_node_id] = true;
-    }
-
     // Main loop
-    while (q.get_size() > 0) {
+    int* exit = (int*)&computation_mem_area[32];
+    while (*exit == 0) {
         __syncthreads();
 
-        // Get the current node information
-        d_Neighbor<T> now = q.pop();
-        int* neighbors_ids = adjacency_list + now.id * K;
+        if (tidx == 0 && q.isEmpty()) *exit = 1;
+        __syncthreads();
+        if (*exit == 1) break;
 
+        // Get the current node information
+        d_Neighbor<T>* now = (d_Neighbor<T>*)&exit[1];
         if (tidx == 0) {
-            // Mark current node as visited
-            shared_visited[now.id] = true;
+            *now = q.pop();
         }
+        __syncthreads();
+
+        int* neighbors_ids = adjacency_list + now->id * K;
+
+        // if (tidx == 0) {
+        //     // Mark current node as visited
+        //     visited[now->id] = true;
+        // }
+        __syncthreads();
 
         int n_neighbors = 0;
-        while (neighbors_ids[n_neighbors] != -1 && n_neighbors < K) {
+        while (neighbors_ids[n_neighbors] != -1 && n_neighbors <= K) {
             // count number of neighbors in current node
             n_neighbors++;
         }
-
-        
-
-        // Check the exit condidtion
-        bool c = topk.top().dist < now.dist;
-        if (c) {
-            break;
-        }
         __syncthreads();
 
-        // distance computation (convert to bulk?)
-        static __shared__ T shared_distances[K];
+        // Check the exit condidtion
+        if (tidx == 0) {
+            if (topk.top().dist < now->dist) {
+                *exit = 1;
+            } else {
+                *exit = 0;
+            }
+        }
+        __syncthreads();
+        if (*exit == 1) break;
+
+        // distance computation
+        T* shared_distances = (T*)&now[1];
+        __syncthreads();
+
         for (size_t i = 0; i < n_neighbors; i++) {
+            __syncthreads();
             T dist = euclidean_distance_gpu<T>(
                 shared_query,
                 dataset + neighbors_ids[i] * VEC_DIM,
-                VEC_DIM
+                VEC_DIM,
+                computation_mem_area
             );
             __syncthreads();
             if (tidx == 0) {
@@ -104,34 +118,20 @@ __global__ void search_layer_kernel(
             }
         }
         __syncthreads();
-        
-        // Update priority queues
+
         if (tidx == 0) {
             for (size_t i = 0; i < n_neighbors; i++) {
-                if (shared_visited[neighbors_ids[i]]) continue;
-                shared_visited[neighbors_ids[i]] = true;
+                // if (visited[neighbors_ids[i]]) continue;
+                // visited[neighbors_ids[i]] = true;
 
-                if (shared_distances[i < topk.top().dist] ||
-                    topk.get_size() < *ef) {
-                    
-                    q.insert({shared_distances[i], neighbors_ids[i]});
-                    topk.insert({shared_distances[i], neighbors_ids[i]});
-
-                    if (topk.get_size() > *ef) {
-                        topk.pop();
-                    }
-
-                }
+                q.insert({shared_distances[i], neighbors_ids[i]});
+                topk.insert({shared_distances[i], neighbors_ids[i]});
             }
         }
-        __syncthreads();
     }
 
-    // Flush the heap and get results
+    // get results
     if (tidx == 0) {
-        while (topk.get_size() > *ef) {
-            topk.pop();
-        }
         for (size_t i = 0; i < *ef; i++) {
             result[blockIdx.x * (*ef) + i] = topk.pop();
         }
@@ -221,7 +221,7 @@ SearchResults search_layer_launch(
     }
     cudaMemcpy(d_adjacency_list, adjacency_host.data(), ds_size * K * sizeof(int), cudaMemcpyHostToDevice);
 
-    // Launch kernel
+    // Launch kernel shared memory size 48KB
     search_layer_kernel<<<num_queries, VEC_DIM>>>(
         d_queries,
         d_start_ids,

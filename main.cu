@@ -35,8 +35,9 @@ int main() {
     cout << "index_construction: " << build_time / 1000 << " [ms]" << endl;
 
     int test_k = 4;
-    int test_layer = 3;
-    Dataset<float> test_queries = queries;
+    int test_layer = 2;
+    Dataset<float> test_queries;
+    test_queries.push_back(queries[66]);
     int test_n_query = test_queries.size();
 
     // Measure GPU time

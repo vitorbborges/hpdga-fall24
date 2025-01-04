@@ -270,6 +270,8 @@ template <typename T = float> struct d_Neighbor {
       : dist(std::move(other.dist)), id(std::move(other.id)) {}
 };
 
+enum HeapType { MIN_HEAP, MAX_HEAP }; // Defines heap type
+
 } // namespace ds
 
 #endif // HNSW_DATA_STRUCTURES_CUH
