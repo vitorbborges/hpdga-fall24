@@ -201,6 +201,15 @@ public:
       return heap[1];
     }
   }
+
+  // Removes and returns the top element
+  __device__ d_Neighbor<T> pop() {
+    if (type == MIN_HEAP) {
+      return popMin();
+    } else {
+      return popMax();
+    }
+  }
 };
 
 #endif // HNSW_SYMMETRIC_MMH_CUH
