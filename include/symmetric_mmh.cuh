@@ -96,7 +96,7 @@ private:
 public:
   // Constructor initializes heap in shared memory
   __device__ SymmetricMinMaxHeap(d_Neighbor<T> *sharedHeap,
-                                 HeapType type = MIN_HEAP,
+                                 HeapType type,
                                  int maximumSize = 1) {
     heap = sharedHeap;
     size = 1; // Start size at 1 for consistent indexing

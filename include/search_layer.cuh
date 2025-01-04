@@ -26,17 +26,17 @@ __global__ void search_layer_kernel(
     T* query = queries + bidx * VEC_DIM;
     int start_node_id = start_ids[bidx].id;
 
-    extern __shared__ T sharedMemory[];
+    extern __shared__ unsigned char sharedMemory[];
 
-    T* shared_query = sharedMemory;
+    T* shared_query = (T*)sharedMemory;
     for (size_t i = 0; i < VEC_DIM; i++) {
         shared_query[i] = query[i];
     }
 
-    SharedBloomFilter visited;
-    visited.init();
+    SharedBloomFilter* visited = (SharedBloomFilter*)&shared_query[VEC_DIM];
+    visited->init();
 
-    d_Neighbor<T>* candidates_array = (d_Neighbor<T>*)&shared_query[VEC_DIM];
+    d_Neighbor<T>* candidates_array = (d_Neighbor<T>*)&visited[1];
     SymmetricMinMaxHeap<T> q(candidates_array, MIN_HEAP, *ef);
 
     d_Neighbor<T>* top_candidates_array = (d_Neighbor<T>*)&candidates_array[*ef + 1];
@@ -54,7 +54,7 @@ __global__ void search_layer_kernel(
     if (tidx == 0) {
         q.insert({start_dist, start_node_id});
         topk.insert({start_dist, start_node_id});
-        // visited.set(start_node_id);
+        visited->set(start_node_id);
     }
     __syncthreads();
 
@@ -75,12 +75,6 @@ __global__ void search_layer_kernel(
         __syncthreads();
 
         int* neighbors_ids = adjacency_list + now->id * K;
-
-        // if (tidx == 0) {
-        //     // Mark current node as visited
-        //     visited[now->id] = true;
-        // }
-        __syncthreads();
 
         int n_neighbors = 0;
         while (neighbors_ids[n_neighbors] != -1 && n_neighbors <= K) {
@@ -121,11 +115,18 @@ __global__ void search_layer_kernel(
 
         if (tidx == 0) {
             for (size_t i = 0; i < n_neighbors; i++) {
-                // if (visited[neighbors_ids[i]]) continue;
-                // visited[neighbors_ids[i]] = true;
+                int neighbor_id = neighbors_ids[i];
+                printf("neighbor_id: %d\n", neighbor_id);
+                if (visited->test(neighbor_id)) continue;
+                visited->set(neighbor_id);
 
-                q.insert({shared_distances[i], neighbors_ids[i]});
-                topk.insert({shared_distances[i], neighbors_ids[i]});
+                q.insert({shared_distances[i], neighbor_id});
+                
+                topk.insert({shared_distances[i], neighbor_id});
+                printf("q: ");
+                q.print();
+                printf("topk: ");
+                topk.print();
             }
         }
     }
@@ -137,6 +138,62 @@ __global__ void search_layer_kernel(
         }
     }
 
+}
+
+static inline size_t alignUp(size_t offset, size_t alignment) {
+    return (offset + alignment - 1) & ~(alignment - 1);
+}
+
+/**
+ * @brief Computes the number of bytes needed in dynamic shared memory
+ *        for one block in search_layer_kernel, given ef and T.
+ * 
+ * The layout we assume (same as in the kernel example):
+ *   1) shared_query: VEC_DIM * sizeof(T)
+ *   2) visited:      1 * sizeof(SharedBloomFilter)
+ *   3) candidates_array: (ef+1) * sizeof(d_Neighbor<T>)
+ *   4) top_candidates_array: (ef+1) * sizeof(d_Neighbor<T>)
+ *   5) computation_mem_area: e.g. 64 * sizeof(T)
+ *   6) exit_flag:    1 * sizeof(int)
+ *
+ * @tparam T     data type of the vectors (float, half, etc.)
+ * @param ef     search parameter (size of each heap)
+ * @return size_t the total number of bytes required
+ */
+template <typename T>
+size_t computeSharedMemoryBytesHost(int ef) 
+{
+    size_t offset = 0;
+    
+    // 1) shared_query
+    offset = alignUp(offset, alignof(T));
+    offset += VEC_DIM * sizeof(T);
+
+    // 2) visited (Bloom filter)
+    offset = alignUp(offset, alignof(SharedBloomFilter));
+    offset += sizeof(SharedBloomFilter);
+
+    // 3) candidates_array
+    offset = alignUp(offset, alignof(d_Neighbor<T>));
+    offset += (ef + 1) * sizeof(d_Neighbor<T>);
+
+    // 4) top_candidates_array
+    offset = alignUp(offset, alignof(d_Neighbor<T>));
+    offset += (ef + 1) * sizeof(d_Neighbor<T>);
+
+    // 5) now
+    offset = alignUp(offset, alignof(d_Neighbor<T>));
+    offset += sizeof(d_Neighbor<T>);
+
+    // 6) computation_mem_area (example: 64 floats or T’s)
+    offset = alignUp(offset, alignof(T));
+    offset += 32 * sizeof(T);
+
+    // 7) exit_flag
+    offset = alignUp(offset, alignof(int));
+    offset += sizeof(int);
+
+    return offset;
 }
 
 template <typename T = float>
@@ -221,8 +278,10 @@ SearchResults search_layer_launch(
     }
     cudaMemcpy(d_adjacency_list, adjacency_host.data(), ds_size * K * sizeof(int), cudaMemcpyHostToDevice);
 
+    size_t smemBytes = computeSharedMemoryBytesHost<T>(ef);
+
     // Launch kernel shared memory size 48KB
-    search_layer_kernel<<<num_queries, VEC_DIM>>>(
+    search_layer_kernel<<<num_queries, VEC_DIM, smemBytes>>>(
         d_queries,
         d_start_ids,
         d_adjacency_list,
