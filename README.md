@@ -1,54 +1,76 @@
-# High-Performance Data & Graph Analytics - Fall 2024
+# HPDGA Fall 24
 
-Repository for the High-Performance Data and Graph Analytics contest.
+Welcome to the **HPDGA Fall 24** repository!
 
-Main deadlines:
+## Description
 
-- Register for the contest: 2024-11-21 (yy-mm-dd) @ 23:59 CET
-- Submission (as detailed in the lecture's slides): 2024-12-30 (yy-mm-dd) @ 23:59 CET (NO LATE COMMITS!)
+A brief description of the HPDGA Fall 24 project. Explain the purpose, goals, and any relevant information to help others understand what this project is about.
 
-For further details follow the information on the lecture's slides. 
+## Features
 
-## Contest instructions
+- Feature 1
+- Feature 2
+- Feature 3
 
-The contest is organized in two main steps:
+## Installation
 
-1. Accelerate the search procedure for varying values of K (K=100, K=1000)
-2. [Optional - Only after 1 is completed] Accelerate the index construction step
+### Run it locally
 
-You are responsible for completing the two steps and properly organizing the time at your disposal!
+1. **Clone the repository:**
+   If you are reading this section, it means you have access to this private repository. Clone the repository to your local machine using the following command:
 
-Create a [release](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository) once step-1 is completed.
+   ```bash
+    git clone https://github.com/vitorbborges/hpdga-fall24.git
+    cd hpdga-fall24
+    ```
 
-### Build and run
-You can build and execute the existing implementation by running the following commands:
+2. **Install the dependencies:**
+   To properly run and profile everything, you need to install nvidia tools. You can do this by running the following command:
 
-```sh
-mkdir build && cd build
-cmake ..
-make
-./hnsw
+   ```bash
+    set -x \
+    && cd $(mktemp -d) \
+    && wget https://developer.download.nvidia.com/compute/cuda/12.1.0/local_installers/cuda_12.1.0_530.30.02_linux.run \
+    && sudo sh cuda_12.1.0_530.30.02_linux.run --silent --toolkit \
+    && rm cuda_12.1.0_530.30.02_linux.run
+    ```
+
+3. **Run the project:**
+
+After cloning the repository, to compile and run the project locally you need to inform the NVCC compiler what is the CUDA architecture of your GPU. To do this, you need to set the `CUDA_ARCH` environment variable to the architecture number of your GPU. You can refer to the [Nvidia Developer](https://developer.nvidia.com/cuda-gpus portal to find it.
+
+Note: It is also possible to just run `nvidia-smi` on your terminal and ask ChatGPT what the architecture number should be. DO THIS AT YOUR OWN RISK. After finding out the number, run the following on terminal:
+
+```bash
+touch .env
+echo "CUDA_ARCH={YOUR ARCHITECTURE NUMBER GOES HERE}" > .env
 ```
 
-In the repository, you'll find the smallest dataset. To download the standard one: 
+Now you can compile and run the project:
 
-```sh
-wget ftp://ftp.irisa.fr/local/texmex/corpus/sift.tar.gz
-tar -xvzf sift.tar.gz
-```
+    ```bash
+    # Compile the program
+    !mkdir -p build \
+    && cd build \
+    && cmake .. \
+    && cmake --build .
+    ```
 
-You will have to modify the `Makefile` in order to compile the code with `nvcc`, as seen during the lectures.
+Run the program:
 
-###  How to use Colab
-1) From your *private copy of this repository*, open the `colab.ipynb` file in this folder and click on the "open in Colab" button
-2) Create a GihHub fine-grained personal access token just for this repository [link](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token) (remember to give the right permission to the token in order to use it)
-3) Select the `GPU runtime` in Colab [link](https://www.geeksforgeeks.org/how-to-use-google-colab)
-4) Change the parameters accordingly with your account ID, clone repository name and token
+    ```bash
+    cmake --build . --target run
+    ```
 
-We suggest editing the original code on your local machine, commit it on GitHub and then load the changes inside of your Colab environment by executing the cell for pulling the remote commits.
 
-## Credits
+### Run it remotely on Google Colab
 
-This is a highly simplified and didactic version of https://github.com/arailly/hnsw with additional comments and parsing of .ivec/.fvec input files.
+1. **Make sure you received the .env file:**
+   To run the project on Google Colab, you need to have the `.env` file with the GITHUB_TOKEN and CUDA_ARCH variables. Make sure you have received this file from the project owner. This is important to seemlesly clone the repository and inform the compiler what is the GPU architecture of the T4 GPU currently available on Google Colab.
 
+2. **Run the project:**
+
+After receiving the `.env` file, you can take a look into `cuda_colab.ipynb` that was sent togheter with the `.env` file. This notebook needs to be placed in the same Google Drive folder as the `.env` file. 
+
+You also need to edit the path to the `.env` file in the notebook. This is the last cell of the notebook that needs editing. After that, you can run the notebook and it will clone the repository, compile, run and profile everything for you.        
 
