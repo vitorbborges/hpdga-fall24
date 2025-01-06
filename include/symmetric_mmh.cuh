@@ -95,11 +95,8 @@ private:
 
 public:
   // Constructor initializes heap in shared memory
-  __device__ SymmetricMinMaxHeap(d_Neighbor<T> *sharedHeap,
-                                  HeapType type) : 
-                                  heap(sharedHeap),
-                                  size(1),
-                                  type(type) {}
+  __device__ SymmetricMinMaxHeap(d_Neighbor<T> *sharedHeap, HeapType type)
+      : heap(sharedHeap), size(1), type(type) {}
 
   // Inserts a new element into the heap
   __device__ void insert(d_Neighbor<T> value) {
@@ -188,22 +185,22 @@ public:
   }
 
   // Pops the top element according to heap type
-    __device__ d_Neighbor<T> pop() {
-        if (type == MIN_HEAP) {
-        return popMin();
-        } else {
-        return popMax();
-        }
+  __device__ d_Neighbor<T> pop() {
+    if (type == MIN_HEAP) {
+      return popMin();
+    } else {
+      return popMax();
     }
+  }
 
-    // Pops the bottom element according to heap type
-    __device__ d_Neighbor<T> popBottom() {
-        if (type == MIN_HEAP) {
-        return popMax();
-        } else {
-        return popMin();
-        }
+  // Pops the bottom element according to heap type
+  __device__ d_Neighbor<T> popBottom() {
+    if (type == MIN_HEAP) {
+      return popMax();
+    } else {
+      return popMin();
     }
+  }
 };
 
 #endif // HNSW_SYMMETRIC_MMH_CUH

@@ -154,9 +154,58 @@ struct SearchResult {
   void add_neighbor(float dist, int id) { result.emplace_back(dist, id); }
 };
 
+// Experiment parameters structure
+struct ExperimentParams {
+  int k;       // Number of neighbors to search for
+  int n_query; // Number of queries to search for
+  std::chrono::system_clock::time_point start_alloc;
+  std::chrono::system_clock::time_point end_alloc;
+  std::chrono::system_clock::time_point start_calc;
+  std::chrono::system_clock::time_point end_calc;
+  std::string experiment_name; // Name for saving results
+
+  // Default constructor
+  ExperimentParams() : k(0), n_query(0), experiment_name("") {}
+
+  // Constructor with specific parameters
+  ExperimentParams(int k_, int n_query_, std::string name)
+      : k(k_), n_query(n_query_), experiment_name(name) {}
+
+  long long get_duration(chrono::system_clock::time_point start,
+                         chrono::system_clock::time_point end) const {
+    return chrono::duration_cast<chrono::microseconds>(end - start).count();
+  }
+
+  // search time duration
+  long long search_duration() const {
+    return get_duration(start_calc, end_calc);
+  }
+
+  // total time duration
+  long long total_duration() const {
+    if (start_alloc != chrono::system_clock::time_point()) {
+      return get_duration(start_alloc, end_alloc);
+    } else {
+      return 0;
+    }
+  }
+
+  // calculate save name
+  std::string save_name() const {
+    std::string save_name = experiment_name;
+    save_name += "-k" + std::to_string(k);
+    save_name += "-query" + std::to_string(n_query);
+    return save_name;
+  }
+};
+
 // Struct representing multiple search results
 struct SearchResults {
   std::vector<SearchResult> results; // Collection of search results
+  ExperimentParams params;           // Experiment parameters
+
+  // Default constructor
+  SearchResults() = default;
 
   // Initialize with a specified number of search results
   explicit SearchResults(size_t size) : results(size) {}
@@ -185,8 +234,59 @@ struct SearchResults {
     return results[i];
   }
 
+  auto calc_one_recall(const Neighbors &actual, const Neighbors &expect,
+                       int k) {
+    float recall = 0;
+
+    for (int i = 0; i < k; ++i) {
+      const auto n1 = actual[i];
+      int match = 0;
+      for (int j = 0; j < k; ++j) {
+        const auto n2 = expect[j];
+        if (n1.id != n2.id)
+          continue;
+        match = 1;
+        break;
+      }
+      recall += match;
+    }
+
+    recall /= actual.size();
+    return recall;
+  }
+
+  void calculate_recall(const std::vector<Neighbors> &ground_truth) {
+    for (size_t i = 0; i < results.size(); ++i) {
+      // Use the calc_recall function to calculate the recall for each query
+      results[i].recall =
+          calc_one_recall(results[i].result, ground_truth[i], params.k);
+    }
+  }
+
+  // Calculate average recall of the search results
+  float get_avg_recall() const {
+    float avg_recall = 0.0f;
+    for (const auto &result : results) {
+      avg_recall += result.recall;
+    }
+    avg_recall /= results.size();
+
+    return avg_recall;
+  }
+
   // Save search results to log and result files
-  void save(const std::string &log_path, const std::string &result_path) const {
+  void save(const std::string &result_data_dir,
+            std::ofstream &times_ofs) const {
+
+    const string log_path =
+        result_data_dir + "log-" + params.save_name() + ".csv";
+    const string result_path =
+        result_data_dir + "result-" + params.save_name() + ".csv";
+
+    times_ofs << params.save_name() << "," << std::to_string(get_avg_recall())
+              << "," << params.search_duration() << ","
+              << params.total_duration() << "\n";
+
     std::ofstream log_ofs(log_path);
     if (!log_ofs) {
       throw std::ios_base::failure("Failed to open log file");
@@ -221,6 +321,22 @@ struct SearchResults {
       std::cout << "\n";
       ++query_id;
     }
+  }
+
+  // print search parameters to the console
+  void print_params() const {
+    std::cout << "experiment_name: " << params.experiment_name << "\n";
+    std::cout << "k: " << params.k << "\n";
+    std::cout << "n_query: " << params.n_query << "\n";
+  }
+
+  // Print average recall and search time to the console
+  void print_metrics() const {
+    print_params();
+    std::cout << "Average recall: " << get_avg_recall() << "\n";
+    std::cout << "Search time: " << params.search_duration() / 1000
+              << " [ms]\n";
+    std::cout << "Total time: " << params.total_duration() / 1000 << " [ms]\n";
   }
 };
 

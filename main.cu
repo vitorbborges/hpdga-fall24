@@ -1,127 +1,145 @@
+#include "search_layer.cuh"
 #include <hnsw.cuh>
 #include <utils.cuh>
-#include "search_layer.cuh"
 
 using namespace utils;
 using namespace hnsw;
 
 int main() {
-    std::cout << "GPU" << std::endl;
+  std::cout << "GPU" << std::endl;
 
-    const string base_dir = "../";
+  const string base_dir = "../";
 
-    int k = 100;
-    int m = 16;
-    int ef_construction = 100;
+  int k = 100;
+  const int m = 16;
+  int ef_construction = 10;
 
-    // SIFT10k (small) - 10,000 base / 100 query / 128 dim
-    const string data_path = base_dir + "datasets/siftsmall/siftsmall_base.fvecs";
-    const string query_path = base_dir + "datasets/siftsmall/siftsmall_query.fvecs";
-    const string ground_truth_path = base_dir + "datasets/siftsmall/siftsmall_groundtruth.ivecs";
-    const int n = 10000, n_query = 100;
+//   // SIFT10k (small) - 10,000 base / 100 query / 128 dim
+//   const string data_path = base_dir + "datasets/siftsmall/siftsmall_base.fvecs";
+//   const string query_path =
+//       base_dir + "datasets/siftsmall/siftsmall_query.fvecs";
+//   const string ground_truth_path =
+//       base_dir + "datasets/siftsmall/siftsmall_groundtruth.ivecs";
+//   const int n = 10000, n_query = 100;
 
-    cout << "Start loading data" << endl;
-    const auto dataset = fvecs_read(data_path, n);
-    const auto queries = fvecs_read(query_path, n_query);
-    const auto ground_truth = load_ivec(ground_truth_path, n_query, k);
-    cout << "Data loaded" << endl;
+  // SIFT1M (normal) - 1,000,000	base / 10,000 query / 128 dim
+  const string data_path = base_dir + "datasets/sift/sift_base.fvecs";
+  const string query_path = base_dir + "datasets/sift/sift_query.fvecs";
+  const string ground_truth_path = base_dir +
+  "datasets/sift/sift_groundtruth.ivecs"; const int n = 1000000, n_query =
+  10000;
 
-    cout << "Start building index" << endl;
-    const auto start = get_now();
-    auto index = HNSW(m, ef_construction);
-    index.build(dataset);
-    const auto end = get_now();
-    const auto build_time = get_duration(start, end);
-    cout << "index_construction: " << build_time / 1000 << " [ms]" << endl;
+  const auto dataset = fvecs_read(data_path, n);
+  const auto queries = fvecs_read(query_path, n_query);
+  const auto ground_truth = load_ivec(ground_truth_path, n_query, k);
 
-    int test_k = 100;
-    int test_layer = 0;
+  cout << "Start building index" << endl;
+  const auto start = get_now();
+  auto index = HNSW(m, ef_construction);
+  index.build(dataset);
+  const auto end = get_now();
+  const auto build_time = get_duration(start, end);
+  cout << "index_construction: " << build_time / 1000 << " [ms]" << endl;
+
+  const string result_base_dir = base_dir + "results/";
+  const string times_path = result_base_dir + "search_times.csv";
+  const string result_data_dir = result_base_dir + "data/";
+
+  std::ofstream times_ofs(times_path);
+  if (!times_ofs) {
+    throw std::ios_base::failure("Failed to open times file");
+  }
+  times_ofs << "save_name,avg_recall,search_duration,total_duration\n";
+
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  // Warmup Kernel
+  cudaStream_t warmupStream;
+  cudaStreamCreate(&warmupStream);
+  warmup(warmupStream);
+
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  int test_layer = 0;
+
+  for (int test_n_query = 10000; test_n_query <= 10000; test_n_query += 1) {
     Dataset<float> test_queries;
-    test_queries.push_back(queries[66]);
-    int test_n_query = test_queries.size();
-
-    // Measure GPU time
-    std::chrono::system_clock::time_point gpu_start;
-    std::chrono::system_clock::time_point gpu_end;
-    auto results_gpu = search_layer_launch(
-        test_queries,
-        index.enter_node_id,
-        test_k,
-        index.layers[test_layer],
-        index.layer_map.at(test_layer),
-        dataset.size(),
-        dataset,
-        gpu_start,
-        gpu_end
-    );
-    const auto gpu_duration = get_duration(gpu_start, gpu_end);
-    cout << "GPU search time: " << gpu_duration / 1000 << " [ms]" << endl;
-
-    // Calculate recall
     for (int i = 0; i < test_n_query; i++) {
-        results_gpu[i].recall = calc_recall(results_gpu[i].result, ground_truth[i], k);
+      test_queries.push_back(queries[i]);
     }
-    
-    // print average recall
-    float avg_recall_gpu = 0;
-    for (int i = 0; i < test_n_query; i++) {
-        avg_recall_gpu += results_gpu[i].recall;
-    }
-    avg_recall_gpu /= test_n_query;
-    cout << "Average recall: " << avg_recall_gpu << endl;
+    for (int test_k = 1; test_k <= 100; test_k += 1) {
+      // Measure CPU time for search
+      ExperimentParams cpu_params(test_k, test_n_query, "cpu");
 
-    results_gpu.print_results();
-
-    // Measure CPU time
-    const auto cpu_start = get_now();
-    SearchResults results_cpu(test_n_query);
-    for (size_t i = 0; i < test_n_query; i++) {
+      cpu_params.start_calc = get_now();
+      SearchResults results_cpu(test_n_query);
+      for (size_t i = 0; i < test_n_query; i++) {
         auto cpu_result = index.search_layer(
-            test_queries[i],
-            index.enter_node_id,
-            test_k,
-            test_layer
-        );
+            test_queries[i], index.enter_node_id, test_k, test_layer);
 
         SearchResult sr;
         for (size_t j = 0; j < test_k; j++) {
-            Neighbor n;
-            n.id = cpu_result.result[j].id;
-            n.dist = cpu_result.result[j].dist;
-            sr.result.push_back(n);
-            sr.recall = calc_recall(sr.result, ground_truth[i], k);
+          Neighbor n;
+          n.id = cpu_result.result[j].id;
+          n.dist = cpu_result.result[j].dist;
+          sr.result.push_back(n);
+          sr.recall = calc_recall(sr.result, ground_truth[i], k);
         }
         results_cpu[i] = sr;
-    }
-    const auto cpu_end = get_now();
-    const auto cpu_duration = get_duration(cpu_start, cpu_end);
-    cout << "CPU search time: " << cpu_duration / 1000 << " [ms]" << endl;
+      }
+      cpu_params.end_calc = get_now();
+      results_cpu.params = cpu_params;
+      results_cpu.save(result_data_dir, times_ofs);
 
-    // print average recall
-    float avg_recall_cpu = 0;
-    for (int i = 0; i < test_n_query; i++) {
-        avg_recall_cpu += results_cpu[i].recall;
-    }
-    avg_recall_cpu /= test_n_query;
-    cout << "Average recall: " << avg_recall_cpu << endl;
+      // results_cpu.print_metrics();
 
-    results_cpu.print_results();
+      ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    // Check if results are the same using precomputed CPU results
-    bool mismatch_found = false;
-    for (size_t i = 0; i < test_n_query; i++) {
-        for (size_t j = 0; j < test_k; j++) {
-            if (results_gpu[i].result[j].id != results_cpu[i].result[j].id
-                || results_gpu[i].result[j].dist != results_cpu[i].result[j].dist) {
-                mismatch_found = true;
-            }
-        }
-    }
+      // GPU search variations
+      std::vector<std::string> save_names = {"gpu_non_opt", "gpu_shared_mem",
+                                             "gpu_eucdist_opt", "gpu_bloom_pq"};
+      std::vector<SearchResults> results(save_names.size());
 
-    if (!mismatch_found) {
-        cout << "Results are the same" << endl;
-    } else {
-        cout << "Results are different" << endl;
+      for (const auto &save_name : save_names) {
+        SearchResults search_result = search_layer_launch(
+            test_queries, index.enter_node_id, test_k, index.layers[test_layer],
+            index.layer_map.at(test_layer), dataset.size(), dataset, save_name);
+
+        cudaDeviceSynchronize();
+
+        // Calculate recall
+        for (int i = 0; i < test_n_query; i++) {
+          search_result[i].recall =
+              calc_recall(search_result[i].result, ground_truth[i], k);
+        };
+
+        search_result.save(result_data_dir, times_ofs);
+
+        // search_result.print_metrics();
+      }
+
+      //////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+      // Search Layer using SMMH
+
+      SearchResults results_gpu_smmh = search_layer_bloom_smmh_launch(
+          test_queries, index.enter_node_id, test_k, index.layers[test_layer],
+          index.layer_map.at(test_layer), dataset.size(), dataset);
+
+      cudaDeviceSynchronize();
+
+      results_gpu_smmh.params.experiment_name = "gpu_bloom_smmh";
+
+      // Calculate recall
+      for (int i = 0; i < test_n_query; i++) {
+        results_gpu_smmh[i].recall =
+            calc_recall(results_gpu_smmh[i].result, ground_truth[i], k);
+      };
+
+      results_gpu_smmh.save(result_data_dir, times_ofs);
+
+      // results_gpu_smmh.print_metrics();
     }
-    return 0;
+  }
+  return 0;
 }
