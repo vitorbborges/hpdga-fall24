@@ -3,6 +3,7 @@
 build/
 datasets/sift/
 datasets/sift.tar.gz
+results/
 .env
 report*.nsys-rep
 CMakeSettings.json
