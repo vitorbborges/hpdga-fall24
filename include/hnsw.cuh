@@ -2,59 +2,13 @@
 #define HNSW_HNSW_HPP
 
 #include <queue>
-#include <utils.hpp>
+#include <utils.cuh>
 #include <random>
 
 using namespace std;
 using namespace utils;
 
 namespace hnsw {
-    struct Node {
-        const Data<>& data;
-        Neighbors neighbors;
-
-        explicit Node(const Data<>& data_) : data(data_) {}
-    };
-
-    using Layer = vector<Node>;
-
-    struct SearchResult {
-        Neighbors result;
-        double recall = 0;
-    };
-
-    struct SearchResults {
-        vector<SearchResult> results;
-
-        SearchResults(size_t size) : results(size) {}
-        void push_back(const SearchResult& result) { results.emplace_back(result); }
-        void push_back(SearchResult&& result) { results.emplace_back(move(result)); }
-        decltype(auto) operator [] (int i) { return results[i]; }
-
-        void save(const string& log_path, const string& result_path) {
-            ofstream log_ofs(log_path);
-            string line = "query_id,recall";
-            log_ofs << line << endl;
-
-            ofstream result_ofs(result_path);
-            line = "query_id,data_id,dist";
-            result_ofs << line << endl;
-
-            int query_id = 0;
-            for (const auto& result : results) {
-                log_ofs << query_id << ","<< result.recall << endl;
-
-                for (const auto& neighbor : result.result) {
-                    result_ofs << query_id << ","
-                               << neighbor.id << ","
-                               << neighbor.dist << endl;
-                }
-
-                query_id++;
-            }
-        }
-    };
-
     struct HNSW {
         const int m, m_max_0, ef_construction;
         const double m_l;
@@ -140,7 +94,7 @@ namespace hnsw {
                     candidates, discarded_candidates;
 
             vector<bool> added(dataset.size());
-            added[query.id] = true;
+            added[query.id()] = true;
 
             // init candidates
             for (const auto& candidate : initial_candidates) {
@@ -203,7 +157,7 @@ namespace hnsw {
         void insert(const Data<>& new_data) {
             auto l_new_node = get_new_node_level(); // all levels below that will have the node in it
             for (int l_c = l_new_node; l_c >= 0; --l_c)
-                layer_map[l_c].emplace_back(new_data.id); // register the ID of that node in the map for all the lower layers
+                layer_map[l_c].emplace_back(new_data.id()); // register the ID of that node in the map for all the lower layers
 
             // navigate the layers from the start_node_layer down to the layer where the new node needs to be added
             auto start_node_id = enter_node_id;
@@ -230,14 +184,14 @@ namespace hnsw {
                 auto& layer = layers[l_c];
                 // for each neighbor
                 for (const auto neighbor : neighbors) {
-                    if (neighbor.id == new_data.id)
+                    if (neighbor.id == new_data.id())
                         continue;
                     // get the Node class (the list of neighbors contains only IDs)
                     auto& neighbor_node = layer[neighbor.id];
 
                     // add a bidirectional edge
-                    layer[new_data.id].neighbors.emplace_back(neighbor); // link the new node to its NN
-                    neighbor_node.neighbors.emplace_back(neighbor.dist, new_data.id); // add the link from the neighbour to the new node
+                    layer[new_data.id()].neighbors.emplace_back(neighbor); // link the new node to its NN
+                    neighbor_node.neighbors.emplace_back(neighbor.dist, new_data.id()); // add the link from the neighbour to the new node
 
                     const auto m_max = l_c ? m : m_max_0; // if we are in layer 0 m_max should be equal to m_max of layer 0 (which is different from the normal M)
 
@@ -261,7 +215,7 @@ namespace hnsw {
             // if new node is top (this can either happen at the first element added or if we are adding a new layer)
             if (layers.empty() || l_new_node > enter_node_level) {
                 // change enter node
-                enter_node_id = new_data.id;
+                enter_node_id = new_data.id();
 
                 // add new layer
                 layers.resize(l_new_node + 1);
