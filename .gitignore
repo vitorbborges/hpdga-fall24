@@ -2,6 +2,7 @@
 .vscode/
 build/
 datasets/sift/
+results/data/
 datasets/sift.tar.gz
 .env
 report*.nsys-rep
