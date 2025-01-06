@@ -35,7 +35,7 @@ __inline__ __device__ float warp_reduce_sum(float val) {
 
 // Computes Euclidean distance between two vectors on the GPU
 template <typename T>
-__inline__ __device__ T euclidean_distance(const T *vec1, const T *vec2,
+__inline__ __device__ T euclidean_distance_non_opt(const T *vec1, const T *vec2,
                                            int dimensions) {
   T sum = 0.0f;
   for (int i = 0; i < dimensions; ++i) {

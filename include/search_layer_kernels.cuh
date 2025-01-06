@@ -35,7 +35,7 @@ __global__ void search_layer_non_opt_kernel(T *queries,
 
   // Calculate distance from start node to query and add to queue
   T start_dist =
-      euclidean_distance<T>(query, dataset + start_node_id * VEC_DIM, VEC_DIM);
+      euclidean_distance_non_opt<T>(query, dataset + start_node_id * VEC_DIM, VEC_DIM);
 
   if (tidx == 0) {
     q.insert({start_dist, start_node_id});
@@ -79,7 +79,7 @@ __global__ void search_layer_non_opt_kernel(T *queries,
     // distance computation (convert to bulk?)
     T distances[K];
     for (size_t i = 0; i < n_neighbors; i++) {
-      T dist = euclidean_distance<T>(
+      T dist = euclidean_distance_non_opt<T>(
           query, dataset + neighbors_ids[i] * VEC_DIM, VEC_DIM);
       __syncthreads();
       if (tidx == 0) {
@@ -155,7 +155,7 @@ __global__ void search_layer_shared_mem_kernel(T *queries,
   PriorityQueue<T> topk(top_candidates_array, &top_candidates_size, MAX_HEAP);
 
   // Calculate distance from start node to query and add to queue
-  T start_dist = euclidean_distance<T>(
+  T start_dist = euclidean_distance_non_opt<T>(
       shared_query, dataset + start_node_id * VEC_DIM, VEC_DIM);
 
   if (tidx == 0) {
@@ -200,7 +200,7 @@ __global__ void search_layer_shared_mem_kernel(T *queries,
     // distance computation (convert to bulk?)
     static __shared__ T shared_distances[K];
     for (size_t i = 0; i < n_neighbors; i++) {
-      T dist = euclidean_distance<T>(
+      T dist = euclidean_distance_non_opt<T>(
           shared_query, dataset + neighbors_ids[i] * VEC_DIM, VEC_DIM);
       __syncthreads();
       if (tidx == 0) {

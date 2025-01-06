@@ -60,14 +60,14 @@ int main() {
 
   ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-  int test_layer = 1;
+  int test_layer = 0;
 
-  for (int test_n_query = 1; test_n_query <= 100; test_n_query += 1) {
+  for (int test_n_query = 20; test_n_query <= 20; test_n_query += 1) {
     Dataset<float> test_queries;
     for (int i = 0; i < test_n_query; i++) {
       test_queries.push_back(queries[i]);
     }
-    for (int test_k = 100; test_k <= 100; test_k += 1) {
+    for (int test_k = 1; test_k <= 100; test_k += 1) {
       // Measure CPU time for search
       ExperimentParams cpu_params(test_k, test_n_query, "cpu");
 
@@ -83,12 +83,13 @@ int main() {
           n.id = cpu_result.result[j].id;
           n.dist = cpu_result.result[j].dist;
           sr.result.push_back(n);
-          sr.recall = calc_recall(sr.result, ground_truth[i], k);
         }
+        sr.recall = calc_recall(sr.result, ground_truth[i], test_k);
         results_cpu[i] = sr;
       }
       cpu_params.end_calc = get_now();
       results_cpu.params = cpu_params;
+
       results_cpu.save(result_data_dir, times_ofs);
 
       // results_cpu.print_metrics();
@@ -110,7 +111,7 @@ int main() {
         // Calculate recall
         for (int i = 0; i < test_n_query; i++) {
           search_result[i].recall =
-              calc_recall(search_result[i].result, ground_truth[i], k);
+              calc_recall(search_result[i].result, ground_truth[i], test_k);
         };
 
         search_result.save(result_data_dir, times_ofs);
