@@ -5,6 +5,9 @@ Welcome to the **HPDGA Fall 24** repository!
 ## Description
 
 This repository contains the source code for the HPDGA Fall 24 challenge. The code is a parallel implementation of the Hierarchical Navigable Samall World (HNSW) algorithm using CUDA. The HNSw is an Aproximate K Nearest Neighbors search algorithm and is highly parallelizable, as shown by the performance gains. 
+
+The repository contains several test branches for you to explore the details on each optimization that we did. The main branch contains the final version of the code, with all optimizations applied.
+
 ## Sections
 
 - Run it locally
