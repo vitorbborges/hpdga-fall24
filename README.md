@@ -58,7 +58,7 @@ Now you can compile and run the project:
 Run the program:
 
     ```bash
-    cmake --build . --target run
+    cmake --build build --target run
     ```
 
 
