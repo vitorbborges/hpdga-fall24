@@ -12,22 +12,22 @@ int main() {
 
   int k = 100;
   const int m = 16;
-  int ef_construction = 10;
+  int ef_construction = 100;
 
-//   // SIFT10k (small) - 10,000 base / 100 query / 128 dim
-//   const string data_path = base_dir + "datasets/siftsmall/siftsmall_base.fvecs";
-//   const string query_path =
-//       base_dir + "datasets/siftsmall/siftsmall_query.fvecs";
-//   const string ground_truth_path =
-//       base_dir + "datasets/siftsmall/siftsmall_groundtruth.ivecs";
-//   const int n = 10000, n_query = 100;
+  // SIFT10k (small) - 10,000 base / 100 query / 128 dim
+  const string data_path = base_dir + "datasets/siftsmall/siftsmall_base.fvecs";
+  const string query_path =
+      base_dir + "datasets/siftsmall/siftsmall_query.fvecs";
+  const string ground_truth_path =
+      base_dir + "datasets/siftsmall/siftsmall_groundtruth.ivecs";
+  const int n = 10000, n_query = 100;
 
-  // SIFT1M (normal) - 1,000,000	base / 10,000 query / 128 dim
-  const string data_path = base_dir + "datasets/sift/sift_base.fvecs";
-  const string query_path = base_dir + "datasets/sift/sift_query.fvecs";
-  const string ground_truth_path = base_dir +
-  "datasets/sift/sift_groundtruth.ivecs"; const int n = 1000000, n_query =
-  10000;
+  // // SIFT1M (normal) - 1,000,000	base / 10,000 query / 128 dim
+  // const string data_path = base_dir + "datasets/sift/sift_base.fvecs";
+  // const string query_path = base_dir + "datasets/sift/sift_query.fvecs";
+  // const string ground_truth_path = base_dir +
+  // "datasets/sift/sift_groundtruth.ivecs"; const int n = 1000000, n_query =
+  // 10000;
 
   const auto dataset = fvecs_read(data_path, n);
   const auto queries = fvecs_read(query_path, n_query);
@@ -60,14 +60,14 @@ int main() {
 
   ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-  int test_layer = 0;
+  int test_layer = 1;
 
-  for (int test_n_query = 10000; test_n_query <= 10000; test_n_query += 1) {
+  for (int test_n_query = 1; test_n_query <= 100; test_n_query += 1) {
     Dataset<float> test_queries;
     for (int i = 0; i < test_n_query; i++) {
       test_queries.push_back(queries[i]);
     }
-    for (int test_k = 1; test_k <= 100; test_k += 1) {
+    for (int test_k = 100; test_k <= 100; test_k += 1) {
       // Measure CPU time for search
       ExperimentParams cpu_params(test_k, test_n_query, "cpu");
 
